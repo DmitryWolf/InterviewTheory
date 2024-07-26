@@ -223,3 +223,195 @@ SleepLock и Mutex - это механизм, который блокирует�
 
 ---
 # Пул потоков, условные переменные
+## Что это такое?
+Хотим примитив, такой базовый объект для работы с параллельностью. Он называется **ThreadPool**
+Мы хотим создавать ThreadPool, который состоит из фиксированного числа потоков, и уже в этих потоках запускать некоторые задачи.
+
+    #include <iostream>
+    #include <atomic>
+    #include <functional>
+    #include <thread>
+    #include <chrono>
+    using namespace std::chrono_literals;
+    
+
+    class StaticThreadPool{
+        using Task = std::function<void()>;
+    public:
+        StaticThreadPool(size_t workers);
+        ~StaticThreadPool();
+    
+        void Submit(Task task);
+
+        void Join();
+
+    private:
+        // TODO
+    };
+
+    int main(){
+        // Make thread pool with 4 worker threads
+        StaticThreadPool pool{/*threads==*/4};
+
+        // Submit task to thread pool
+        pool.Submit([](){
+            // Unacceptable!
+            std::this_thread::sleep_for(3s);
+            std::cout << "Do not block worker threads!" << std::endl;
+        });
+
+        pool.Submit([](){
+            std::cout << "Hello from pool!" << std::endl;
+        });
+
+        // Await until all submitted task have completed
+        // and join worker threads
+        pool.Join();
+
+        return 0;
+    }
+
+## Зачем может понадобиться ThreadPool?
+Придумаем какое-нибудь алгоритмическое приминение. Представим алгоритмы сортировки QuickSort и MergeSort. Оба алгоритма делят задачу пополам.
+Рассмотрим QuickSort: делаем какой-то партишн корневой, а затем у нас две задачи. Мы можем корневую задачу запустить в тредпуле, а потом из тредпула прямо туда же, прямо в него же бросить две новые подзадачи.
+Рассмотрим MergeSort: он сначала запускает две подзадачи, а потом он должен дождаться, когда они завершатся. Он устроен принципиально по другому. И мы могли бы положить в тредпул две подзадачи, но как же мы будем дожидаться, пока они завершатся?
+Блокироваться и засыпать в задачах ThreadPool - очень плохо (!!!)
+## Как реализовать
+![alt text](images/43.png)
+[Coroutines](https://en.cppreference.com/w/cpp/language/coroutines)
+[cppcoro](https://github.com/lewissbaker/cppcoro#static_thread_pool)
+
+---
+## [condition_variable](https://en.cppreference.com/w/cpp/thread/condition_variable)
+В чем смысл этого объекта? У него две (вообще три, но две по сути разные) основные операции: **wait**, **notify_one** и **notify_all**
+
+[wait](https://en.cppreference.com/w/cpp/thread/condition_variable/wait) - мы вызываем метод wait в cv, только имея залоченный мьютекс. Зачем? Затем, что мы хотим его отпустить, и вместе с этим атомарно заблокироваться на ожидание какого-то события. Тот, кто ждет изменения состояния, вызывает wait и отпускает блокировку внутри автоматически
+[notify_one](https://en.cppreference.com/w/cpp/thread/condition_variable/notify_one) и [notify_all](https://en.cppreference.com/w/cpp/thread/condition_variable/notify_all) - тот, кто потом блокировку отпущенную подбирает и кладет задачу, он вызывает notify и будит того, кто ждал
+![alt text](images/44.png)
+conditional_variable - это как бы обобщение фьютекса. Во фьютексе мы ждем на ячейке памяти, а в кондваре мы ждем на произвольном состоянии.
+## Spurious wakeup
+Если мы хотим ждать на каком-то предикате с помощью кондвара, то нам нужно писать while а не if
+Нас могут выкинуть из wake просто так, даже если никто не позвал notify
+Но в данном случае это не единственная причина, по которой мы должны писать while а не if. Чтобы после notify нам проснуться, нам нужно пройти через эту границу, по рисунку: войти в комнату и взять лок. Но мы не единственные претендуем на лок. У нас есть другие потоки, которые берут лок. Вдобавок, у нас есть потоки, которые только заходят в комнату, а не выходят из кладовки
+## Почему conditional_variable связан с mutex?
+mutex в cv нужны, потому что если мы читаем состояние, то невозможно его будет изменить, пока мы не заснули, а если мы изменяем состояние, то ...
+## Реализация ThreadPool
+
+    #include <iostream>
+    #include <atomic>
+    #include <functional>
+    #include <thread>
+    #include <chrono>
+    #include <vector>
+    #include <deque>
+    #include <mutex>
+    #include <assert.h>
+    #include <condition_variable>
+    using namespace std::chrono_literals;
+    
+
+    // Unbounded Blocking Multi-Producer/Multi-Consumer (MPMC) Queue
+
+    // 1) shared state
+    // 2) mutex
+    // 3) predicate(state)
+
+    template <typename T>
+    class UnboundedBlockingMPMCQueue{
+    public:
+        // Thread role: producer
+        void Put(T value){
+            std::lock_guard<std::mutex> guard(mutex_);
+            buffer_.push_back(std::move(value));
+            not_empty_.notify_one();
+        }
+        
+        // Thread role: consumer
+        T Take(){
+            std::unique_lock<std::mutex> lock(mutex_);
+            while (buffer_.empty()){ // 
+                // 1) Release mutex, 2) Wait 3) Reacquire mutex
+                // Spurious wakeup
+                not_empty_.wait(lock);
+            }
+            return TakeLocked();
+        }
+    private:
+        T TakeLocked(){
+            assert(!buffer_.empty());
+            T front = std::move(buffer_.front());
+            buffer_.pop_front();
+            return front;
+        }
+
+        std::deque<T> buffer_; // Guarded by mutex_
+        std::mutex mutex_;
+        std::condition_variable not_empty_;
+    };
+
+    class StaticThreadPool{
+        using Task = std::function<void()>;
+    public:
+        StaticThreadPool(size_t workers){
+            StartWorkerThreads(workers);
+        }
+        ~StaticThreadPool() {
+            assert(workers_.empty());
+        }
+    
+        void Submit(Task task){
+            tasks_.Put(std::move(task));
+        }
+
+        void Join(){
+            for (auto& worker : workers_){
+                tasks_.Put({}); // Poison pill
+            }
+            for (auto& worker : workers_){
+                worker.join();
+            }
+            workers_.clear();
+        }
+
+    private:
+        void StartWorkerThreads(size_t count){
+            for (size_t i = 0; i < count; ++i){
+                workers_.emplace_back([this](){
+                    WorkerRoutine();
+                });
+            }
+        }
+        
+        void WorkerRoutine(){
+            while (true){
+                auto task = tasks_.Take();
+                if (!task){
+                    break;
+                }
+                task();
+            }
+        }
+
+        std::vector<std::thread> workers_;
+        UnboundedBlockingMPMCQueue<Task> tasks_;
+    };
+
+    int main(){
+        StaticThreadPool pool(4);
+        int shared_counter = 0;
+        for (size_t i = 0; i < 100500; ++i){
+            pool.Submit([&]{
+                ++shared_counter;
+            });
+        }
+        pool.Join();
+        std::cout << shared_counter << std::endl;
+    }
+
+# Futures & Promises, Executors
+![alt text](images/45.png)
+![alt text](images/46.png)
+Мы сделали тредпул: сделали пул потоков, пришли к нему, сделали сабмит и в него улетела задача, эта задача ушла стала в какую-то очередь, и дальше какой-то из воркеров ее подхватил и асинхронно исполнил. Мы в этот момент связь с этой задачей потеряли: мы не знаем, когда именно она завершится, и, более того, мы не можем извлечь из нее никакой результат. Все, что у нас есть, это метод Join, который позволяет дождаться сразу всех задач. На уровне отдельных задач мы уже работать не можем.
+Начнем с того, что доработаем механизм тредпула для того, чтобы он смогт возвращать нам результат. Для этого нам потребуется новый примитив синхронизации std::future.
+[Future](https://en.cppreference.com/w/cpp/thread/future) - механизм, который в грубом первом приближении дает нам возможность из асинхронной операции вернуть значение, т.е. передать значение из одного потока в другой. std::future не самостоятельный примитив, он работает в паре с std::promise. Это конец канала, из которого consumer извлекает значение
+[Promise](https://en.cppreference.com/w/cpp/thread/promise) - это конец канала, в который producer пишет значение
