@@ -96,17 +96,35 @@ private:
     UnboundedBlockingMPMCQueue<Task> tasks_;
 };
 
+template <typename F>
+auto AsyncVia(StaticThreadPool& pool, F&& task){
+    using T = decltype(task());
+    
+    std::promise<T> promise;
+    auto future = promise.get_future();
+
+    auto task_wrapper = [promise = std::move(promise), task]() mutable {
+        try{
+            T value = task();
+            promise.set_value(std::move(value));
+        } catch(...){
+            promise.set_exception(std::current_exception());
+        }
+    };
+
+    pool.Submit(std::move(task_wrapper));
+    
+    return future;
+}
 
 int main(){
     StaticThreadPool pool(4);
-    int shared_counter = 0;
-    for (size_t i = 0; i < 100500; ++i){
-        pool.Submit([&]{
-            ++shared_counter;
-        });
-    }
+
+    auto future = AsyncVia(pool, []() -> int {return 42; });
+
+    std::cout << "Async result: " << future.get() << std::endl;
+
     pool.Join();
-    std::cout << shared_counter << std::endl;
     
     return 0;
 }
