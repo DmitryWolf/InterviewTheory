@@ -1,4 +1,5 @@
-# Обработка исключений. Идиома RAII. Исключения в конструкторах
+**Обработка исключений. Идиома RAII. Исключения в конструкторах**
+# Обработка исключений
 Есть три основные низкоуровневые причины, почему программы падают:
 1) Segmentation fault
 2) Floating point exception
@@ -222,4 +223,504 @@
     copy
     terminate called after throwing an instance of 'A'
     Aborted
-Это UB. Если исключение не ловится, то компилятор ничего не гарантирует, кроме того, что мы упадем с вызывом функции terminate. Но относительно того, что он вызовет какие-то деструкторы, он уже гарантий не дает
+Это UB. Если исключение не ловится, то компилятор ничего не гарантирует, кроме того, что мы упадем с вызывом функции terminate. Но относительно того, что он вызовет какие-то деструкторы, он уже гарантий не дает.
+Мы можем вместо '\n' написать в выводе std::endl, чтобы убедиться, что мы убедились, что std::cout выведет в консоль, и только после этого terminate делается
+## Multiple catch
+У нас есть код
+
+    #include <iostream>
+
+    int main(){
+        try{
+            throw 1;
+        } catch (double d){
+            std::cout << "double";
+        } catch (long long l){
+            std::cout << "long long";
+        } catch (...){
+            std::cout << "other";
+        }
+    }
+Вывод
+
+    other
+Но если мы напишем:
+
+    #include <iostream>
+
+    int main(){
+        try{
+            throw 1;
+        } catch (double d){
+            std::cout << "double";
+        } catch (long long l){
+            std::cout << "long long";
+        }
+    }
+Вывод:
+
+    terminate called after throwing an instance of 'int'
+    Aborted
+В первом примере выведется other не потому, что он больше всего подходит, а потому что он единственный, кто подходит. Когда делается catch, у нас не применяются правила перегрузки, и не делается выбор, какая конверсия лучше. Просто: либо вы поймали в точности такой тип, какой бросили, либо нет. Он смотрит catch подряд и как только находит подходящий, он его выбирает.
+Но из этого правила есть два исключения: конверсия в const все-таки проделываются, т.е. если мы бросили неконстантную, а поймали по константной ссылке, это можно. А еще можно ловить по ссылке на родителя то, что было брошено как наследник, иначе мы бы не могли по ссылке на std::exception поймать частный случай exception. И по значению можно. Т.е. если мы бросили наследника Derived, то по ссылке на Base мы его поймаем. Но если мы даже бросили int, то unsigned int мы уже не поймаем
+Код:
+
+    #include <iostream>
+
+    struct Mom {};
+    struct Son : Mom {};
+
+
+    int main(){
+        try{
+            Son s;
+            throw s;
+        } catch (Mom){
+            std::cout << "caught Mom";
+        } catch (Son){
+            std::cout << "caught Son";
+        } catch (...){
+            std::cout << "other";
+        }
+    }
+
+Компилятор пишет:
+
+    multiple_catch.cpp: In function ‘int main()’:
+    multiple_catch.cpp:13:7: warning: exception of type ‘Son’ will be caught by earlier handler [-Wexceptions]
+    13 |     } catch (Son){
+        |       ^~~~~
+    multiple_catch.cpp:11:7: note: for type ‘Mom’
+    11 |     } catch (Mom){
+        |       ^~~~~
+Вывод:
+
+    caught Mom
+Но! Если мы напишем так:
+
+    #include <iostream>
+
+    struct Mom {};
+    struct Son : private Mom {}; // updated
+
+
+    int main(){
+        try{
+            Son s;
+            throw s;
+        } catch (Mom){
+            std::cout << "caught Mom";
+        } catch (Son){
+            std::cout << "caught Son";
+        } catch (...){
+            std::cout << "other";
+        }
+    }
+Вывод:
+
+    caught Son
+И warning исчез. Т.е. из main мы никак не можем использовать тот факт, что сын наследник мамы, стало быть теперь catch mom на сына не работает
+А если напишем так:
+
+    struct Mom {};
+    struct Son : private Mom {
+        friend int main();
+    };
+То все равно выведется:
+
+    caught Son
+
+**Теперь другой пример:**
+
+    #include <iostream>
+
+    struct Granny {};
+    struct Dad: Granny {};
+    struct Mom: Granny {};
+    struct Son: Mom, Dad {};
+
+
+    int main(){
+        try{
+            Son s;
+            throw s;
+        } catch (Granny){
+            std::cout << "caught Granny";
+        } catch (Son){
+            std::cout << "caught Son";
+        } catch (...){
+            std::cout << "other";
+        }
+    }
+Вывод:
+    
+    caught Son
+Даже если напишем так:
+
+    struct Granny {};
+    struct Dad: Granny {};
+    struct Mom: private Granny {};
+    struct Son: private Mom, Dad {};
+То все равно выведется:
+
+    caught Son
+И напоследок:
+
+    #include <iostream>
+
+    struct Granny {};
+    struct Dad: virtual Granny {};
+    struct Mom: virtual Granny {};
+    struct Son: Mom, Dad {};
+
+
+    int main(){
+        try{
+            Son s;
+            throw s;
+        } catch (Granny){
+            std::cout << "caught Granny";
+        } catch (Son){
+            std::cout << "caught Son";
+        } catch (...){
+            std::cout << "other";
+        }
+    }
+Компилятор поругается:
+
+    multiple_catch.cpp: In function ‘int main()’:
+    multiple_catch.cpp:15:7: warning: exception of type ‘Son’ will be caught by earlier handler [-Wexceptions]
+    15 |     } catch (Son){
+        |       ^~~~~
+    multiple_catch.cpp:13:7: note: for type ‘Granny’
+    13 |     } catch (Granny){
+        |       ^~~~~
+И выведется:
+
+    caught Granny
+
+# Идиома RAII
+**Resource Acquisition Is Initialization (RAII)** - это программная идиома, смысл которой заключается в том, что с помощью тех или иных программных механизмов получение некоторого ресурса неразрывно совмещается с инициализацией, а освобождение — с уничтожением объекта.
+
+Допустим, есть код
+
+    #include <iostream>
+
+    void g(int y){
+        if (y == 0){
+            throw 1;
+        }
+    }
+
+    void f(int x){
+        int* p = new int(x);
+        g(*p);
+        delete p;
+    }
+
+    int main(){
+        f(5);
+    }
+Понятно, что это игрушечный пример, но это такой рафинированный пример глобальной проблемы, которая на самом деле не выдуманная и очень реальная, и очень актуальная, часто встречающаяся. Вот мы в какой-то функции выделяем какой-то ресурс: например, динамическую память или открываем файлы, и что-то начинаем делать. А что если, между тем как мы сделали new и сделали delete кто-то из тех, кого мы вызывали в промежутке, кинул исключение? Никто delete за нас не вызовет. Как вариант: не использовать исключение. Есть мнение, что исключения лучше не использовать вообще. Но есть мнение, что эту проблему можно решить, используя ООП. Проблема в чем: мы захватили какой-то ресурс new, потом делаем какие-то действия сложные, и в конце делаем delete, но вот эти действия сложные могут бросить exception. Естественно, мы не хотим писать каждый раз try catch. Можно сделать обертку:
+
+    struct SmartPtr{
+        int* p;
+        SmartPtr(int* p): p(p) {}
+        ~SmartPtr() { delete p; }
+        int& operator*(){
+            return *p;
+        }
+    };
+Но появляется другая проблема: что, если мы хотим этот указатель куда-то отдать?
+
+    #include <iostream>
+
+    struct SmartPtr{
+        int* p;
+        SmartPtr(int* p): p(p) {}
+        ~SmartPtr() { delete p; }
+        int& operator*(){
+            return *p;
+        }
+    };
+
+    void g(SmartPtr p){
+        if (*p == 0){
+            throw 1;
+        }
+    }
+
+    void f(int x){
+        SmartPtr p(new int(x));
+        g(p);
+    }
+
+    int main(){
+        f(5);
+    }
+Все грохнется, потому что у нас copy конструктор автоматически сгенерировался, а деструктор каждый делает delete одного и того же поинтера. Такой smartptr нельзя копировать
+
+    template <typename T>
+    struct unique_ptr{
+        T* p;
+        unique_ptr(T* p): p(p) {}
+        unique_ptr(const unique_ptr&) = delete;
+        unique_ptr& operator=(const unique_ptr&) = delete;
+        ~unique_ptr() { delete p; }
+        T& operator*(){
+            return *p;
+        }
+    };
+Идейная реализация unique_ptr
+RAII применимо не только к поинтерам, например еще для открытия файла например. Вот есть у нас std::fstream, std::ifstream, std::ofstream, это класс, который работать с файлами. Он внутри себя в конструкторе вызывает open(), а в деструкторе close()
+# Исключения в конструкторах и деструкторах
+## Исключения в конструкторах
+Есть код:
+
+    #include <iostream>
+
+    struct A{
+        A() {std::cout << "A"; }
+        ~A() {std::cout << "~A"; }
+    };
+
+    struct S{
+        A a;
+        S(int x){
+            std::cout << "S";
+            if (x == 0) throw 1;
+        }
+        ~S(){
+            std::cout << "~S";
+        }
+    };
+
+
+    int main(){
+        try{
+            S s(0);
+        } catch (...){
+            
+        }
+    }
+Вывод:
+
+    AS~A
+Все потому что у нас не создался S до конца, а значит его деструктор не должен вызываться, но А успело создаться, поэтому оно должно быть уничтожено
+Но вот так:
+
+    struct A{
+        A() {std::cout << "A"; }
+        ~A() {std::cout << "~A"; }
+    };
+
+    struct S{
+        A* a;
+        S(int x) : a(new A()){
+            std::cout << "S";
+            if (x == 0) throw 1;
+        }
+        ~S(){
+            std::cout << "~S";
+            delete a;
+        }
+    };
+будет утечка памяти, никто не сделает delete
+Если у нас поля - это ресурсы, которые мы захватываем, то их тоже надо оборачивать в RAII. Если вдруг у нас по какой-то причине конструктор не доработает до конца, то по крайней мере деструкторы полей вызовутся.
+
+**Другой случай**: теперь у нас исключение вылетает в списке инициализации S
+    #include <iostream>
+
+    struct A{
+        A(int x) {
+            std::cout << "A";
+            if (x == 0) throw 1;
+        }
+        ~A() {
+            std::cout << "~A";
+        }
+    };
+
+    struct S{
+        A a;
+        A aa;
+        A aaa;
+        S(int x) : a(1), aa(0), aaa(2) {
+            std::cout << "S";
+        }
+        ~S(){
+            std::cout << "~S";
+        }
+    };
+
+
+    int main(){
+        try{
+            S s(0);
+        } catch (...){
+
+        }
+    }
+Вывод:
+
+    AA~A
+Вызовутся деструкторы всех тех полей, которые успели создаться уже к этому моменту. Как нам на уровне конструктора S обработать это? Мы хотим уметь писать try для списка инициализации. Такая возможность называется **[function try block](https://web.archive.org/web/20240106111948/https://en.cppreference.com/w/cpp/language/function-try-block)**
+*[Почему-то на cppreference страница пустая](https://en.cppreference.com/w/cpp/language/function-try-block)*
+
+    #include <iostream>
+
+    struct A{
+        A(int x) {
+            std::cout << "A";
+            if (x == 0) throw 1;
+        }
+        ~A() {
+            std::cout << "~A";
+        }
+    };
+
+    struct S{
+        A a;
+        A aa;
+        A aaa;
+        S(int x) try : a(1), aa(0), aaa(2) {
+            std::cout << "S";
+        } catch (...){
+            std::cout << "caught!";
+        }
+        ~S(){
+            std::cout << "~S";
+        }
+    };
+
+    int main(){
+       try{
+            S s(0);
+        } catch (...){
+
+        }
+    }
+Вывод:
+
+    AA~Acaught!
+А если в main напишем вот так:
+
+    int main(){
+        S s(0);
+    }
+Правило следующее: если мы написали такой function try block в конструкторе, то автоматически делается throw из него
+Вывод:
+
+    terminate called after throwing an instance of 'int'
+    Aborted
+На cppreference написано:
+*Before any catch clauses of a function-try-block on a constructor are entered, all fully-constructed members and bases have already been destroyed.
+If the function-try-block is on a delegating constructor, which called a non-delegating constructor that completed successfully, but then the body of the delegating constructor throws, the destructor of this object will be completed before any catch clauses of the function-try-block are entered.
+Before any catch clauses of a function-try-block on a destructor are entered, all bases and non-variant members have already been destroyed.
+The behavior is undefined if the catch-clause of a function-try-block used on a constructor or a destructor accesses a base or a non-static member of the object.
+Every catch-clause in the function-try-block for a constructor must terminate by throwing an exception. If the control reaches the end of such handler, the current exception is automatically rethrown as if by throw;. The return statement is not allowed in any catch clause of a constructor's function-try-block.*
+
+На самом деле, эта конструкция позволяет нам писать try после любой функции:
+
+    void f() try{
+
+    } catch (...){
+
+    }
+## Исключения с деструкторах
+Исключения в дестркуторах - это зло, даже большее, чем в конструкторах
+Что, если исключение вылетело из деструктора? Проблема исключений в деструкторах в том, что деструктор сам по себе мог быть вызван сам по себе мог быть вызван по причине того, что было брошено исключение, и вот тогда это кранты. Т.е. если деструктор вызван в штатной ситуации, когда мы выходем из какого-то блока кода, это ладно. Но если мы находимся в деструкторе, и бросаем исключение из деструктора, но сам деструктор был вызван по причине того, что уже летело исключение, то тогда стандарт говорит, что в этой ситуации вызывается std::terminate с формулировкой "брошено исключение из деструктора". До c++11 нельзя было бросать исключение из деструктора, если деструктор был вызван по причине летящего исключения. Начиная с c++11 просто нельзя бросать исключение из деструктора (с некоторой оговоркой, есть волшебное слово **noexcept(false)**, которое разрешает это делать)
+Вот такой код:
+
+    #include <iostream>
+
+    struct A{
+        A(int) {
+            std::cout << "A";
+        }
+        ~A() {
+            std::cout << "~A";
+        }
+    };
+
+    struct S{
+        S(int x) {
+            std::cout << "S";
+        }
+        ~S(){
+            std::cout << "~S";
+            throw 1;
+        }
+    };
+
+
+    int main(){
+        try{
+            S s(0);
+        } catch(...){
+
+        }
+    }
+Компилятор дает предупреждение:
+
+    exceptions_in_constructors.cpp: In destructor ‘S::~S()’:
+    exceptions_in_constructors.cpp:18:9: warning: ‘throw’ will always call ‘terminate’ [-Wterminate]
+    18 |         throw 1;
+        |         ^~~~~~~
+    exceptions_in_constructors.cpp:18:9: note: in C++11 destructors default to ‘noexcept’
+А в выводе имеем:
+
+    terminate called after throwing an instance of 'int'
+    Aborted
+Но! С волшебным словом **noexcept(false)**:
+
+    #include <iostream>
+
+    struct A{
+        A(int) {
+            std::cout << "A";
+        }
+        ~A() {
+            std::cout << "~A";
+        }
+    };
+
+    struct S{
+        S(int x) {
+            std::cout << "S";
+        }
+        ~S() noexcept(false) { // updated
+            std::cout << "~S";
+            throw 1;
+        }
+    };
+
+
+    int main(){
+        try{
+            S s(0);
+        } catch(...){
+
+        }
+    }
+Компилятор перестает ругаться, а в выводе имеем:
+
+    S~S
+Но в такой ситуации:
+
+    int main(){
+        try{
+            S s(0);
+            throw 1;
+        } catch(...){
+
+        }
+    }
+Будет вызван terminate
+
+    terminate called after throwing an instance of 'int'
+    Aborted
+
+Тем не менее, мы вот находимся в деструкторе, и нам хочется бросить исключение, но мы не уверены, а вдруг уже летит исключение? Мы хотим проверить, находимся ли мы сейчас в ситуации, когда летит исключение. Есть простой советский метод, как проверить в данный момент runtime, летит ли исключение, нужно всего лишь... написать **[std::uncaught_exception()](https://en.cppreference.com/w/cpp/error/uncaught_exception)**. Она возвращает bool: true, если летит исключение, иначе false
+Начиная с c++17 эта функция устарела, ее заменила функция **[std::uncaught_exceptions()](https://en.cppreference.com/w/cpp/error/uncaught_exception)**
+Зачем нужна функция std::uncaught_exceptions()? В C++ возможна ситуация, когда одновременно летит несколько exceptions. Например, мы в деструкторе написали try, внутри которого вызвали другую функцию, которая бросила исключение

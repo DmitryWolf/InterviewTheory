@@ -2,8 +2,8 @@
 
 struct A{
     A() { std::cout << "A\n"; }
-    A(const A&) { std::cout << "copy\n"; }
-    ~A() { std::cout << "~A\n"; }
+    A(const A&) { std::cout << "copy" << std::endl; }
+    ~A() { std::cout << "~A" << std::endl; }
 }; 
 
 void f(int x){
@@ -15,5 +15,14 @@ void f(int x){
 }
 
 int main(){
-    f(0);
+    try{
+        try{
+            f(0);
+        } catch (A& a){
+            std::cout << "caught!" << &a << '\n';
+            throw a;
+        }
+    } catch (A& a){
+        std::cout << "caught again!" << &a << '\n';
+    }
 }
