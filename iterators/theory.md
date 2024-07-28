@@ -128,5 +128,5 @@ std::copy и std::copy_if требует только InputIterator
     }
 [Например, iterator_category - это такой тип, который олицетворяет категорию итератора](https://en.cppreference.com/w/cpp/iterator/iterator_tags)
 
-Задача 
+Почитать самому
 [std::output_iterator](https://en.cppreference.com/w/cpp/iterator/output_iterator)
