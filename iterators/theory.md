@@ -73,3 +73,60 @@ Since iterators are an abstraction of pointers, their semantics are a generaliza
 ## [Algorithm library](https://en.cppreference.com/w/cpp/algorithm)
 [Sort](https://en.cppreference.com/w/cpp/algorithm/sort)
 ![alt text](images/2.png)
+
+Алгоритмы, которые в принципе существуют над последовательностями, классифицируются по требованию на итератор входной
+
+std::sort - это quicksort с какими-то оптимизациями (на самом деле [introsort](https://ru.wikipedia.org/wiki/Introsort)), он требует RandomAccessIterator
+А, например, BubbleSort требует ForwardIterator, и std::is_sorted тоже, в то время как std::next_permutation требует BidirectionalIterator
+std::copy и std::copy_if требует только InputIterator
+
+Существует несколько задач по алгоритмам, которые можно сформулировать в терминах видов итераторов.
+Например:
+* *Дан массив. Известно, что все числа встречаются дважды, а одно число встречается только один раз. Как найти это число?*
+Решение: xor всех элементов. Но если бы мы писали библиотечную функцию, которая решает эту задачу, мы бы попросили InputIterator, потому что это однопроходный алгоритм
+* *Дан массив интов размера n. Известно, что одно из чисел встречается строго больше, чем n/2 раз. Найдите это число (за линейное время с константной памятью).* Решение: легко, а как решить это, используя только InputIterator? Посмотрим на аналогию с танцами: приходят люди на танцы, у нас есть пул людей, которые сейчас стоят ждут в очереди, и приходит следующий человек. Если он находит себе в пару человека, который он отличается от него, то он идет с ним в пару. Т.е. мы помним число и количество раз сколько оно встретилось, т.е. мы помним два числа, когда мы видим очередное число, если оно совпадает с тем, которое мы храним, мы увеличиваем счетчик, иначе уменьшаем счетчик. Таким образом, в конце у нас гарантированно останется число, которое было больше n/2 раз, чем остальные
+
+[std::lower_bound](https://en.cppreference.com/w/cpp/algorithm/lower_bound) - достаточно лишь ForwardIterator
+![alt text](images/3.png)
+Но почему? На самом деле здесь есть подвох: бинпоиск работает логарифмическое время, но оно логарифмическое относительно операции над T по стандарту. На самом деле, про бинпоиск в стандарте сказано следующее: он делает логарифмическое количество сравнений, а вот сдвиги итератора не учитываются. И на самом деле это разумно: представим, что мы делаем бинпоиск на массиве огромных очень длинных строк. Сравнение строк - долгая операция. Тогда нам разумно сделать бинпоиск на ForwardIterator, т.е. если у нас есть связанный список из строк, нам может быть осмысленно сделать бинпоиск на этом связанном списке с ForwardIterator, сэкономив таким образом количество вызовов операций сравнения строк, потому что инкремент оператора дешевый, а сравнение дорогое может быть. (А если оператор RandomAccessIterator, то он это понимает, и сразу делает +=)
+
+В [deque](https://en.cppreference.com/w/cpp/container/deque) метод [push_back](https://en.cppreference.com/w/cpp/container/deque/push_back) работает за константное время, в то время как в [vector](https://en.cppreference.com/w/cpp/container/vector) метод [push_back](https://en.cppreference.com/w/cpp/container/vector/push_back) работает за амортизированную константу. Дело в том, что как и в случае с бинпоиском, стандарт, когда оценивает сложность операции в контейнере, он оценивает ее относительно операции над T. А операции над самой памятью и над поинтерами не учитываются, потому что не очень понятно, как их учитывать: что такое выделение памяти, это не очень понятно, что по сложности из себя представляет. А в vector не константное время их происходит, а линейное, потому что нам нужно вызвать деструктор там и вызвать конструктор на новом месте
+
+## Как по iterator понять, какой у него вид, и как из под iterator что-нибудь достать?
+Трюк, который позволяет понять, от какого типа мы вызвались
+
+    #include <iostream>
+    #include <vector>
+
+    template <typename InputIterator>
+    void find_most_often_number(InputIterator begin, InputIterator end){
+        auto x = *begin; // несовсем верно
+    }
+    template <typename T>
+    void f(T) = delete;
+
+    int main(){
+        std::vector<bool> vb(10);
+        f(*vb.begin());
+    }
+Компилятор ругается:
+
+    iterators.cpp: In function ‘int main()’:
+    iterators.cpp:13:6: error: use of deleted function ‘void f(T) [with T = std::_Bit_reference]’
+    13 |     f(*vb.begin());
+        |     ~^~~~~~~~~~~~~
+    iterators.cpp:9:6: note: declared here
+        9 | void f(T) = delete;
+        |      ^
+Т.е. например для булевого вектора это будет некорректный тип, нельзя написать auto, потому что тип разыменованного begin - это не всегда то, что нужно, это не всегда тот тип, из которого реально состоит последовательность, это может быть какая-то обертка над ним
+
+Есть целый набор метофункций, для узнавания много чего про итераторы: [std::iterator_traits](https://en.cppreference.com/w/cpp/iterator/iterator_traits)
+
+    template <typename InputIterator>
+    void find_most_often_number(InputIterator begin, InputIterator end){
+        typename std::iterator_traits<InputIterator>::value_type x = *begin;
+    }
+[Например, iterator_category - это такой тип, который олицетворяет категорию итератора](https://en.cppreference.com/w/cpp/iterator/iterator_tags)
+
+Задача 
+[std::output_iterator](https://en.cppreference.com/w/cpp/iterator/output_iterator)
