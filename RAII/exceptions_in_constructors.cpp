@@ -15,7 +15,7 @@ struct S{
     }
     ~S() noexcept(false) {
         std::cout << "~S";
-        if (!std::uncaught_exception()){
+        if (!std::uncaught_exceptions()){
             throw 1;
         }
     }

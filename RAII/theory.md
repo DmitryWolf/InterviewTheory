@@ -724,3 +724,66 @@ Every catch-clause in the function-try-block for a constructor must terminate by
 Тем не менее, мы вот находимся в деструкторе, и нам хочется бросить исключение, но мы не уверены, а вдруг уже летит исключение? Мы хотим проверить, находимся ли мы сейчас в ситуации, когда летит исключение. Есть простой советский метод, как проверить в данный момент runtime, летит ли исключение, нужно всего лишь... написать **[std::uncaught_exception()](https://en.cppreference.com/w/cpp/error/uncaught_exception)**. Она возвращает bool: true, если летит исключение, иначе false
 Начиная с c++17 эта функция устарела, ее заменила функция **[std::uncaught_exceptions()](https://en.cppreference.com/w/cpp/error/uncaught_exception)**
 Зачем нужна функция std::uncaught_exceptions()? В C++ возможна ситуация, когда одновременно летит несколько exceptions. Например, мы в деструкторе написали try, внутри которого вызвали другую функцию, которая бросила исключение
+# Exception safety
+## Что это?
+Когда у нас разрешены исключения, нам нужно иметь ввиду, что каждая функция, которую мы реализовываем, может случайно выскочить из своего выполнения не когда return написан, а в случайный момент вызова чего-нибудь. Например, пишем какой-нибудь шаблонный класс над типом T, а тип T, вообще говоря, может кидать исключение. Мы пишем какой-нибудь метод и обращаемся к чему-то у T. Нам нужно понимать, что всякий раз, когда мы к чему-нибудь такому обращаемся, мы можем случайно выйти из своей функции с exception
+
+[Exception safety](https://en.cppreference.com/w/cpp/language/exceptions):
+After the error condition is reported by a function, additional guarantees may be provided with regards to the state of the program. The following four levels of exception guarantee are generally recognized[4][5][6], which are strict supersets of each other:
+1) Nothrow (or nofail) exception guarantee — the function never throws exceptions. Nothrow (errors are reported by other means or concealed) is expected of destructors and other functions that may be called during stack unwinding. The destructors are noexcept by default.(since C++11) Nofail (the function always succeeds) is expected of swaps, move constructors, and other functions used by those that provide strong exception guarantee.
+2) Strong exception guarantee — If the function throws an exception, the state of the program is rolled back to the state just before the function call (for example, std::vector::push_back).
+3) Basic exception guarantee — If the function throws an exception, the program is in a valid state. No resources are leaked, and all objects' invariants are intact.
+4) No exception guarantee — If the function throws an exception, the program may not be in a valid state: resource leaks, memory corruption, or other invariant-destroying errors may have occurred.
+
+Generic components may, in addition, offer exception-neutral guarantee: if an exception is thrown from a template parameter (e.g. from the Compare function object of std::sort or from the constructor of T in std::make_shared), it is propagated, unchanged, to the caller.
+
+[Например, std::vector<T, Allocator>::push_back](https://en.cppreference.com/w/cpp/container/vector/push_back) дает strong exception guarantee
+
+## Noexcept
+До C++11 можно было написать:
+
+    void f() throw {}
+и список типов, которые он умеет бросать. Но это настолько бесполезная и вредная возможность, что ее быстренько отменили, потому что поняли, что от нее никакой пользы, оно только ухудшает, оно все равно ни от чего не обезопасит
+
+Если мы пишем noexcept, то мы обещаем, что мы не будем бросать исключения из своей функции. Мы можем бросать исключения, находясь в ней, но обязаны поймать его на этом же уровне. В частности, мы можем написать:
+
+    void f() noexcept try{
+
+    } catch (...){
+
+    }
+Что же произойдет, если из noexcept функции все же будет брошено исключение? Будет terminate, но не CE. Хотя это можно ловить в compile-time, но коммитет по стандартизации посчитал, что это перебор
+
+Бывает еще условный noexcept
+
+    template <typename T>
+    void f() noexcept(std::is_reference_v<T>){
+
+    }
+Здесь мы говорим: если тип T является ссылкой, то мы обещаем, что эта функция будет noexcept, а иначе не обещаем. Это должно быть compile-time проверяемым условием. Но чаще всего мы хотим поставить noexcept в зависимости от того, является ли кто-то другой noexcept
+    
+    #include <iostream>
+
+    template <typename T>
+    void g() {}
+
+    int main(){
+        std::cout << noexcept(g<int>());
+    }
+Вывод:
+
+    0
+Это оператор, который не вычисляет заданное выражение (как sizeof), просто говорит true или false в зависимости от того, что под ним. Как он понимает, выражение под ним noexcept или нет? Если выражение под ним это вызов функции, то просто он проверяет вызов функции помечен noexcept или нет. А если выражение под ним состоит из выводов каких-то стандартных операторов, то noexcept являются все операторы, кроме [new](https://en.cppreference.com/w/cpp/language/new), [dynamic_cast](https://en.cppreference.com/w/cpp/language/dynamic_cast), [type_id](https://en.cppreference.com/w/cpp/language/typeid), [throw](https://en.cppreference.com/w/cpp/language/throw). Таким образом, мы в compile-time можем про произвольное выражение выяснить, оно noexcept или нет, т.е. содержит ли оно noexcept вызовы функций или стандартных операторов
+
+А теперь мы можем поставить noexcept в зависимости от условия, была ли noexcept функция g
+
+    template <typename T>
+    void g() {}
+
+    template <typename T>
+    void f() noexcept(noexcept(g<T>())){
+    }
+И теперь эта функция noexcept тогда и только тогда, когда вызов g с таким шаблонным параметром был noexcept
+## Дополнение
+[У нас есть оператор [] у vector](https://en.cppreference.com/w/cpp/container/vector/operator_at). Метод At() кидает исключение, если мы выходим за границы. А operator[] noexcept, но он исключений не кидает. Почему? На самом деле, семантика слова noexcept не совсем в том, что мы обещаем не кидать исключений. noexcept помечаются функции, в которых в принципе не может пойти неудачи. Когда мы пишем noexcept или когда видим noexcept, то мы должны понимать это так, что ничего плохого не может произойти от вызова этого метода
+Вдобавок к этому, все [деструкторы](https://en.cppreference.com/w/cpp/container/vector/~vector) являются noexcept, но этого слова не написано, потому что в деструкторе noexcept по умолчанию начиная с c++11.
