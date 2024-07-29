@@ -9,6 +9,9 @@ public:
     }
     
     string& operator=(string&& other) {
+        if (this == &other){
+            return *this;
+        }
         delete[] arr;
         
         arr = other.arr; other.arr = nullptr;
