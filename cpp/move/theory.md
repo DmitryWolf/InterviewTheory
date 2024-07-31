@@ -272,3 +272,19 @@ rvalue ссылкой называется тип такого вида: **T&&**
         else
             return move(param);
     }
+
+Real implementation
+
+    // FUNCTION TEMPLATE forward
+    template <class _Ty>
+    [[nodiscard]] constexpr _Ty&& forward(
+        remove_reference_t<_Ty>& _Arg) noexcept { // forward an lvalue as either an lvalue or an rvalue
+        return static_cast<_Ty&&>(_Arg);
+    }
+
+    template <class _Ty>
+    [[nodiscard]] constexpr _Ty&& forward(
+        remove_reference_t<_Ty>&& _Arg) noexcept { // forward an rvalue as an rvalue
+        static_assert(!is_lvalue_reference_v<_Ty>, "bad forward call");
+        return static_cast<_Ty&&>(_Arg);
+    }
