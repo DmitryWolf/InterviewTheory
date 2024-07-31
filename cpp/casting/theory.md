@@ -504,3 +504,131 @@ D) Derived 2
 А когда мы взяли адрес на виртуальный метод сына, у нас их там уже два, и если мы берем адрес *f* то это как бы сдвиг 0 относительно начала виртуальной таблицы, а если берем *g* у сына, то это сдвиг 8 относительно начала виртуальной таблицы.
 Первое число показывает, на сколько байт относительно начала виртуальной таблицы нужно искать адрес этого метода.
 Почему там единица последним битом? А надо же как-то отличить виртуальные указатели от невиртуальных. Обычные указатели на методы хранят в первых 8 байтах реальные адреса, но эти адреса никогда не нечётные. Чтобы для виртуальных указателей на методы поведение было другим, последним битом ставится единица, чтобы в runtime стало понятно: "А, у этого указателя последний бит единица, значит это отдельный случай, значит это виртуальный указатель, значит само число означает не адрес функции, а сдвиг относительно начала виртуальной таблицы". Таким образом, мы, не меняя размер указателя на метод, кодируем в него сдвиг относительно начала виртуальной таблицы вместо того, чтобы кодировать адрес настоящей функции.
+
+# Дополнение: ромбовидное наследование
+
+**[Что пишут на вики](https://ru.wikipedia.org/wiki/Ромбовидное_наследование)**
+
+Проблема ромба (Diamond problem)- классическая проблема в языках, которые поддерживают возможность множественного наследования. Эта проблема возникает когда классы B и C наследуют A, а класс D наследует B и C.
+
+К примеру, классы A, B и C определяют метод print_letter(). Если print_letter() будет вызываться классом D, неясно какой метод должен быть вызван — метод класса A, B или C. Разные языки по-разному подходят к решению ромбовидной проблем. В C ++ решение проблемы оставлено на усмотрение программиста.
+
+Ромбовидная проблема — прежде всего проблема дизайна, и она должна быть предусмотрена на этапе проектирования. На этапе разработки ее можно разрешить следующим образом:
+* вызвать метод конкретного суперкласса;
+* обратиться к объекту подкласса как к объекту определенного суперкласса;
+* переопределить проблематичный метод в последнем дочернем классе (в коде — turn_on() в подклассе Laptop).
+
+    #include <iostream>
+    using namespace std;
+
+    class Device {
+        public:
+            void turn_on() {
+                cout << "Device is on." << endl;
+            }
+    };
+
+    class Computer: public Device {};
+
+    class Monitor: public Device {};
+
+    class Laptop: public Computer, public Monitor {
+        /*
+        public:
+            void turn_on() {
+                cout << "Laptop is on." << endl;
+            }
+        // uncommenting this function will resolve diamond problem
+        */
+    };
+
+    int main() {
+        Laptop Laptop_instance;
+
+        // Laptop_instance.turn_on();
+        // will produce compile time error
+        // if Laptop.turn_on function is commented out
+
+        // calling method of specific superclass
+        Laptop_instance.Monitor::turn_on();
+
+        // treating Laptop instance as Monitor instance via static cast
+        static_cast<Monitor&>( Laptop_instance ).turn_on();
+        return 0;
+    }
+
+Если метод turn_on() не был переопределен в Laptop, вызов Laptop_instance.turn_on(), приведет к ошибке при компиляции. Объект Laptop может получить доступ к двум определениям метода turn_on() одновременно: Device:Computer:Laptop.turn_on() и Device:Monitor:Laptop.turn_on().
+## Конструкторы и деструкторы
+Поскольку в С++ при инициализации объекта дочернего класса вызываются конструкторы всех родительских классов, возникает и другая проблема: конструктор базового класса Device будет вызван дважды.
+
+    #include <iostream>
+    using namespace std;
+
+    class Device {
+        public:
+            Device() {
+                cout << "Device constructor called" << endl;
+            }
+    };
+
+    class Computer: public Device {
+        public:
+            Computer() {
+                cout << "Computer constructor called" << endl;
+            }
+    };
+
+    class Monitor: public Device {
+        public:
+            Monitor() {
+                cout << "Monitor constructor called" << endl;
+            }
+    };
+
+    class Laptop: public Computer, public Monitor {};
+
+    int main() {
+        Laptop Laptop_instance;
+        return 0;
+    }
+
+## Виртуальное наследование
+
+Виртуальное наследование (virtual inheritance) предотвращает появление множественных объектов базового класса в иерархии наследования. Таким образом, конструктор базового класса Device будет вызван только единожды, а обращение к методу turn_on() без его переопределения в дочернем классе не будет вызывать ошибку при компиляции.
+
+    #include <iostream>
+    using namespace std;
+
+    class Device {
+        public:
+            Device() {
+                cout << "Device constructor called" << endl;
+            }
+            void turn_on() {
+                cout << "Device is on." << endl;
+            }
+    };
+
+    class Computer: virtual public Device {
+        public:
+            Computer() {
+                cout << "Computer constructor called" << endl;
+            }
+    };
+
+    class Monitor: virtual public Device {
+        public:
+            Monitor() {
+                cout << "Monitor constructor called" << endl;
+            }
+    };
+
+    class Laptop: public Computer, public Monitor {};
+
+    int main() {
+        Laptop Laptop_instance;
+        Laptop_instance.turn_on();
+        return 0;
+    }
+*Примечание: виртуальное наследование в классах Computer и Monitor не разрешит ромбовидное наследование если дочерний класс Laptop будет наследовать класс Device не виртуально ( class Laptop: public Computer, public Monitor, public Device {}; ).*
+
