@@ -8,11 +8,11 @@ Since iterators are an abstraction of pointers, their semantics are a generaliza
 Формально обычный указатель - это тоже итератор
 ## Категории итераторов
 Тип считается ...Iterator, если:
-**[InputIterator](https://en.cppreference.com/w/cpp/iterator/input_iterator)** - разыменовывание, инкремент, равенство, неравенство
-**[ForwardIterator](https://en.cppreference.com/w/cpp/iterator/forward_iterator)** - является InputIterator, и вдобавок к этому еще гарантирует нам то, что если мы будем ходить по одной и той же последовательности несколько раз, не меняя ее, то мы будем видеть одно и то же. Пример: итераторы из forward_list, unordered_set, unordered_map
-**[BidirectionalIterator](https://en.cppreference.com/w/cpp/iterator/bidirectional_iterator)** - является ForwardIterator, и вдобавок к этому еще умеет делать **--**. Пример: итераторы из list, set, map
-**[RandomAccessIterator](https://en.cppreference.com/w/cpp/iterator/random_access_iterator)** - является BidirectionalIterator, и вдобавок к этому еще умеет делать: **+=n**, **-=n**, **it1-it2**, **<**, **>**, **<=**, **>=**. Пример: итератор из deque
-**[ContiguousIterator](https://en.cppreference.com/w/cpp/iterator/contiguous_iterator)** (since c++17) - является RandomAccessIterator, и вдобавок к этому еще гарантирует, что он эквивалентен указателю: если мы разыменуем итератор, потом обратно возьмем адрес, прибавим n, и снова разыменуем, то это было бы все равно, что к итератору прибавили n и разыменовали 
+* **[InputIterator](https://en.cppreference.com/w/cpp/iterator/input_iterator)** - разыменовывание, инкремент, равенство, неравенство
+* **[ForwardIterator](https://en.cppreference.com/w/cpp/iterator/forward_iterator)** - является InputIterator, и вдобавок к этому еще гарантирует нам то, что если мы будем ходить по одной и той же последовательности несколько раз, не меняя ее, то мы будем видеть одно и то же. Пример: итераторы из forward_list, unordered_set, unordered_map
+* **[BidirectionalIterator](https://en.cppreference.com/w/cpp/iterator/bidirectional_iterator)** - является ForwardIterator, и вдобавок к этому еще умеет делать **--**. Пример: итераторы из list, set, map
+* **[RandomAccessIterator](https://en.cppreference.com/w/cpp/iterator/random_access_iterator)** - является BidirectionalIterator, и вдобавок к этому еще умеет делать: **+=n**, **-=n**, **it1-it2**, **<**, **>**, **<=**, **>=**. Пример: итератор из deque
+* **[ContiguousIterator](https://en.cppreference.com/w/cpp/iterator/contiguous_iterator)** (since c++17) - является RandomAccessIterator, и вдобавок к этому еще гарантирует, что он эквивалентен указателю: если мы разыменуем итератор, потом обратно возьмем адрес, прибавим n, и снова разыменуем, то это было бы все равно, что к итератору прибавили n и разыменовали 
     
     *(&*it+n)==*(it+n)
 Пример: итераторы из vector, array, любой поинтер
