@@ -186,3 +186,133 @@ PostgreSQL использует репликацию, и все изменени
 ![alt text](images/69.png)
 
 # Работа с БД из приложения и миграции
+*Какие БД существуют, SQL для приложений, приложения на userver, распределенные приложения*
+![alt text](images/70.png)
+## Виды БД
+
+![alt text](images/71.png)
+![alt text](images/72.png)
+
+[Рейтинг DB-engines](https://db-engines.com/en/ranking)
+![alt text](images/73.png)
+
+![alt text](images/74.png)
+![alt text](images/75.png)
+
+## SQL для приложений
+**Основные конструкции, идимоы**
+* RETURNING
+* UPSERT
+* SELECT FOR UPDATE
+* COPY FROM, COPY TO
+
+### RETURNING
+Оператор языка SQL, возвращает значение после выполнения команды в приложение
+![alt text](images/76.png)
+
+### UPSERT
+*update + insert*
+![alt text](images/77.png)
+
+### SELECT FOR UPDATE
+![alt text](images/78.png)
+
+### COPY FROM, COPY TO
+![alt text](images/79.png)
+
+## Разработка с PostgreSQL из userver
+
+*[Проект, которые написали авторы userver](https://github.com/userver-framework/pg_service_template)*
+
+![alt text](images/80.png)
+![alt text](images/81.png)
+
+![alt text](images/82.png)
+![alt text](images/83.png)
+
+![alt text](images/84.png)
+![alt text](images/85.png)
+![alt text](images/86.png)
+
+![alt text](images/87.png)
+
+## Исключения
+![alt text](images/88.png)
+![alt text](images/89.png)
+![alt text](images/90.png)
+
+## Приведение типов Postgres <-> userver
+![alt text](images/91.png)
+![alt text](images/92.png)
+![alt text](images/93.png)
+![alt text](images/94.png)
+![alt text](images/95.png)
+![alt text](images/96.png)
+
+## Транзакции
+Транзакция - это одна из фишек реляционных баз данных, которые позволяют нам реализовывать некоторую комплексную логику, обеспечивать дополнительную надежность
+![alt text](images/97.png)
+![alt text](images/98.png)
+
+![alt text](images/99.png)
+![alt text](images/100.png)
+
+Уровни изоляции (не все):
+![alt text](images/101.png)
+![alt text](images/102.png)
+![alt text](images/103.png)
+
+## Миграции
+Миграции - это SQL-скрипты для изменения схем БД
+![alt text](images/104.png)
+![alt text](images/105.png)
+
+**[Утилита pgmigrate](https://github.com/yandex/pgmigrate/blob/master/doc/tutorial.md)**
+![alt text](images/106.png)
+![alt text](images/107.png)
+![alt text](images/108.png)
+
+![alt text](images/109.png)
+![alt text](images/110.png)
+
+![alt text](images/111.png)
+![alt text](images/112.png)
+
+![alt text](images/113.png)
+![alt text](images/114.png)
+
+![alt text](images/115.png)
+![alt text](images/116.png)
+![alt text](images/117.png)
+![alt text](images/118.png)
+
+## Транзакционные миграции
+![alt text](images/119.png)
+
+## Про индексы
+![alt text](images/120.png)
+![alt text](images/121.png)
+
+## Протокол PostgreSQL. Пулы соединений
+### Протоколы
+![alt text](images/122.png)
+![alt text](images/123.png)
+![alt text](images/124.png)
+
+### Пул соединений
+![alt text](images/125.png)
+![alt text](images/126.png)
+![alt text](images/127.png)
+
+![alt text](images/128.png)
+![alt text](images/129.png)
+
+## Postgres в распределенной системе
+![alt text](images/130.png)
+
+![alt text](images/131.png)
+
+![alt text](images/132.png)
+
+![alt text](images/133.png)
+![alt text](images/134.png)
