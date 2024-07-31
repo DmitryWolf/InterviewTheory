@@ -14,7 +14,7 @@ Since iterators are an abstraction of pointers, their semantics are a generaliza
 * **[RandomAccessIterator](https://en.cppreference.com/w/cpp/iterator/random_access_iterator)** - является BidirectionalIterator, и вдобавок к этому еще умеет делать: **+=n**, **-=n**, **it1-it2**, **<**, **>**, **<=**, **>=**. Пример: итератор из deque
 * **[ContiguousIterator](https://en.cppreference.com/w/cpp/iterator/contiguous_iterator)** (since c++17) - является RandomAccessIterator, и вдобавок к этому еще гарантирует, что он эквивалентен указателю: если мы разыменуем итератор, потом обратно возьмем адрес, прибавим n, и снова разыменуем, то это было бы все равно, что к итератору прибавили n и разыменовали 
     
-    
+
     *(&*it+n)==*(it+n)
 Пример: итераторы из vector, array, любой поинтер
 
@@ -77,8 +77,8 @@ Since iterators are an abstraction of pointers, their semantics are a generaliza
 
 Алгоритмы, которые в принципе существуют над последовательностями, классифицируются по требованию на итератор входной
 
-std::sort - это quicksort с какими-то оптимизациями (на самом деле [introsort](https://ru.wikipedia.org/wiki/Introsort)), он требует RandomAccessIterator
-А, например, BubbleSort требует ForwardIterator, и std::is_sorted тоже, в то время как std::next_permutation требует BidirectionalIterator
+std::sort - это quicksort с какими-то оптимизациями (на самом деле [introsort](https://ru.wikipedia.org/wiki/Introsort)), он требует RandomAccessIterator.
+А, например, BubbleSort требует ForwardIterator, и std::is_sorted тоже, в то время как std::next_permutation требует BidirectionalIterator.
 std::copy и std::copy_if требует только InputIterator
 
 Существует несколько задач по алгоритмам, которые можно сформулировать в терминах видов итераторов.
