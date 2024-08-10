@@ -496,10 +496,17 @@ T&& - это такой тип, который во всем аналогиче�
 # Implementation of std::move
 Как-то так
 
-    template <typename T>
+    template <typename T> // T = int, T&& = int&&
     std::remove_reference_t<T>&& move(T&& value){
         return static_cast<std::remove_reference_t<T>&&>(value);
     }
+
+    template <typename T>
+    T&& forward(std::remove_reference_t<T>&& value){
+        static_assert(!std::is_lvalue_reference_v<T>);
+        return static_cast<T&&>(value);
+    }
+
 # Implementation of std::forward
 Как-то так 2
 
