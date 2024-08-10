@@ -493,56 +493,18 @@ T&& - это такой тип, который во всем аналогиче�
 
 Это подсказывает нам как работает forward: он понимает, какой тип на самом деле, какой вид value в зависимости от того, что в шаблонном аргументе: там либо один амперсанд, либо нет амперсанда. Исходя из этого forward понимает, ему кастить к rvalue или нет 
 
+# Implementation of std::move
+Как-то так
 
+    template <typename T>
+    std::remove_reference_t<T>&& move(T&& value){
+        return static_cast<std::remove_reference_t<T>&&>(value);
+    }
+# Implementation of std::forward
+Как-то так 2
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Real implementation of std::move
-Ну вроде так крч
-
-    // FUNCTION TEMPLATE move
-    template <class _Ty>
-    [[nodiscard]] constexpr remove_reference_t<_Ty>&& move(_Ty&& _Arg) noexcept { // forward _Arg as movable
-        return static_cast<remove_reference_t<_Ty>&&>(_Arg);
+    template <typename T>
+    T&& forward(std::remove_reference_t<T>& value){
+        return static_cast<T&&>(value);
     }
 
-# std::forward
-// TODO
-Идейная реализция:
-
-    template<typename T>
-    T&& forward(T&& param)
-    {
-        if (is_lvalue_reference<T>::value)
-            return param;
-        else
-            return move(param);
-    }
-
-Real implementation
-
-    // FUNCTION TEMPLATE forward
-    template <class _Ty>
-    [[nodiscard]] constexpr _Ty&& forward(
-        remove_reference_t<_Ty>& _Arg) noexcept { // forward an lvalue as either an lvalue or an rvalue
-        return static_cast<_Ty&&>(_Arg);
-    }
-
-    template <class _Ty>
-    [[nodiscard]] constexpr _Ty&& forward(
-        remove_reference_t<_Ty>&& _Arg) noexcept { // forward an rvalue as an rvalue
-        static_assert(!is_lvalue_reference_v<_Ty>, "bad forward call");
-        return static_cast<_Ty&&>(_Arg);
-    }
