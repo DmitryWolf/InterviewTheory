@@ -1,23 +1,27 @@
 #include <iostream>
 
-// polymorphic type
-struct Base{
-    virtual void f() const{
+struct Mom {
+    virtual void f() {
         std::cout << 1 << std::endl;
     }
 };
 
-struct Derived: Base{
-    void f() const override {
+struct Dad {
+    void f(){
         std::cout << 2 << std::endl;
     }
-    void f(){
+};
+
+struct Son: Mom, Dad {
+    void f() override {
         std::cout << 3 << std::endl;
     }
 };
 
 int main(){
-    Derived d;
-    Base& b = d;
-    b.f();
+    Son s;
+    Mom& m = s;
+    Dad& d = s;
+    m.f();
+    d.f();
 }

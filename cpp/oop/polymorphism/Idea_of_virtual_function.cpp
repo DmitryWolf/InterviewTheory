@@ -1,25 +1,25 @@
 #include <iostream>
 
 // polymorphic type
-struct Base{
+struct Granny{
     virtual void f(){
         std::cout << 1 << std::endl;
     }
-    virtual ~Base() = default;
+    virtual ~Granny() = default;
 };
 
-struct Derived: Base{
+struct Mom: Granny{
     int* p = new int(0);
     void f(){
         std::cout << 2 << std::endl;
     }
-    ~Derived(){
+    ~Mom(){
         delete p;
     }
 };
 
 int main(){
-    Base* b = new Derived();
+    Granny* b = new Mom();
     delete b;
     return 0;
 }
