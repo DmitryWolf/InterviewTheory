@@ -888,3 +888,481 @@ struct Latitude {
 - `"sdfsadf"s // это std::string`
 
 
+# Лекция 16
+## Перегрузка операторов
+```cpp
+struct Complex {
+    double re = 0.0;
+    double im = 0.0;
+    Complex(double re) : re(re) {}
+    Complex(double re, double im) : re(re), im(im) {}
+
+    Complex operator+(const Complex& other) const { // чтобы могли вызываться от const объектов
+        return Complex(re + other.re, im + other.im);
+    }
+    // если определить внтури класса, то оператор не симметричный. запрещаем левому агрументу быть не объектом класса
+};
+
+int main() {
+    Complex c(1.0);
+    c + 3.14; // OK
+    3.14 + c; // CE
+}
+```
+
+```cpp
+struct Complex {
+    double re = 0.0;
+    double im = 0.0;
+    Complex(double re) : re(re) {}
+    Complex(double re, double im) : re(re), im(im) {}
+};
+
+// здесь уже без const
+Complex operator+(const Complex& a, const Complex& b) {
+    return Complex(a.re + b.re, a.im + b.im);
+}
+
+int main() {
+    Complex c(1.0);
+    c + 3.14; // OK
+    3.14 + c; // OK
+}
+```
+
+- плохая реализация
+```cpp
+struct Complex {
+    double re = 0.0;
+    double im = 0.0;
+    Complex(double re) : re(re) {}
+    Complex(double re, double im) : re(re), im(im) {}
+
+    // очень медленно на больших объектах
+    Complex& operator+=(const Complex &other) {
+        // 1) новый объект *this + other
+        // 2) operator=
+        *this = *this + other;
+        return *this;
+    }
+};
+Complex operator+(const Complex& a, const Complex& b) {
+    return Complex(a.re + b.re, a.im + b.im);
+}
+```
+надо `+` выражать через `+=`
+```cpp
+struct Complex {
+    double re = 0.0;
+    double im = 0.0;
+    Complex(double re) : re(re) {}
+    Complex(double re, double im) : re(re), im(im) {}
+
+    Complex& operator+=(const Complex &other) {
+        re += other.re;
+        im += other.im;
+        return *this;
+    }
+};
+
+Complex operator+(const Complex& a, const Complex& b) {
+    Complex result = a;
+    result += b;
+    return result;
+}
+
+int main() {
+    Complex a(1.0);
+    Complex b(2.0);
+    Complex c(3.0);
+    // так как мы явно не запретили присваиваивание для rvalue
+    a + b = c; // OK
+}
+```
+надо фиксить так (C++ 11)
+```cpp
+// применим только к lvalue
+Complex& operator=(const Complex &other) &  {/**/}
+// применим только к rvalue
+Complex& operator=(const Complex &other) &&  {/**/}
+```
+- опять про копирования\
+если возвращаем локальную переменную по значению наружу - RVO
+```cpp
+Complex operator+(const Complex& a, const Complex& b) {
+    Complex result = a; // 1) копирование
+    result += b;        // 2) в зависимости от объекта
+    return result;      // 3) RVO - нет копирования
+}
+
+// так не сработает, не локальная переменная
+Complex operator+(Complex a, const Complex& b) {
+    return a += b;
+}
+```
+- потоки вывода
+```cpp
+std::ostream& operator<<(std::ostream& out, const std::string& str) {/**/}
+std::istream& operator>>(std::istream& in, std::string& str) {/**/}
+```
+- операторы сравнения
+```cpp
+bool operator<(const Complex& a, const Complex& b) {
+    return a.re < b.re || a.re == b.re && a.im < b.im;
+}
+```
+```
+a > b  == b < a
+a <= b == !(a > b)
+a >= b == !(a < b)
+
+a == b == !(a < b) && !(b < a)
+a != b == a < b || b < a
+// но лучше равенство определить руками
+```
+- operator spaceship (Three-way comparison) (C++ 20)\
+partial_ordering (<, >, =, не сравним)\
+weak_ordering (<, >, =)\
+strong_ordering (<, >, =) и еще `a == b => f(a) == f(b)`
+```cpp
+struct Complex {
+    double re = 0.0;
+    double im = 0.0;
+    Complex(double re) : re(re) {}
+    Complex(double re, double im) : re(re), im(im) {}
+
+    // по умолчанию - лексикографически
+    std::weak_ordering operator<=>(const Complex& other) const = default;
+};
+```
+
+```cpp
+struct Complex {
+    double re = 0.0;
+    double im = 0.0;
+    Complex(double re) : re(re) {}
+    Complex(double re, double im) : re(re), im(im) {}
+
+    std::weak_ordering operator<=>(const Complex& other) const {
+        return std::weak_ordering::equivalent;
+    }
+    // operator== не доопределяется
+};
+```
+- инкремент, декремент
+```cpp
+struct UserID {
+    int value = 0;
+
+    UserID& operator++() {
+        ++value;
+        return *this;
+    }
+    UserID operator++(int) {
+        UserID copy = *this;
+        ++value;
+        return copy;
+    }
+}
+```
+- operator()
+```cpp
+// функтор
+struct Greater {
+    bool operator() (int x, int y) {
+        return x > y;
+    }
+}
+int main() {
+    std::vector<int> v(10);
+    std::sort(v.begin(), v.end(), Greate());
+}
+```
+
+# Лекция 17
+## Указатель на члены класса
+```cpp
+struct S {
+    int x;
+    double y;
+
+    void f(int z) {
+        std::cout << x + z;
+    }
+};
+
+int main() {
+    int S::* p = &S::x; // указатель на поле класса
+
+    S s{1, 3.14};
+    S* ps = &s;
+    std::cout << s.*p; // достанет int из объекта
+    std::cout << ps->*p; // то же самое, но по указателю
+
+    void (S::* pf)(int) = &S::f; // указатель на метод класса
+    (s.*pf)(3);
+    (s->*pf)(5);
+}
+```
+
+## Enums and enum classes
+- enum
+```cpp
+enum E {
+    White,
+    Gray,
+    Black
+};
+
+int main() {
+    E e = White;
+    int e1 = White; // OK
+    std::cout << e; // OK
+}
+```
+- enum class (C++ 11)
+```cpp
+enum class E {
+    White,
+    Gray,
+    Black
+};
+
+int main() {
+    E e = E::White;
+    int e1 = E::White; // CE
+    std::cout << e;    // CE
+    // можно делать static_cast
+}
+```
+- можно задать значения
+```cpp
+enum class E {
+    White = 2,
+    Gray = 9,
+    Black= 6
+};
+```
+- наследования
+```cpp
+enum class E : int8_t {
+    White = 2,
+    Gray = 9,
+    Black= 6
+};
+```
+
+## Наследования
+- public, private, protected\
+protected член класса доступен всем другим членам класса, друзьям и всем наследникам 
+```cpp
+struct Base {
+protected:
+    int x;
+public:
+    void f() {}
+};
+
+struct Derived : Base {
+    int y;
+    void g() {
+        std::cout << x;
+    }
+}
+
+int main() {
+    Derived d;
+    std::cout << d.x; // CE
+}
+```
+- можно добавить модицикатор доступа при самом наследовании\
+у классов по умолчанию родитель private, у структур public
+```cpp
+struct Derived : public Base {
+    int y;
+    void g() {
+        std::cout << x;
+    }
+}
+
+int main() {
+    Derived d;
+    std::cout << d.x; // CE
+}
+```
+чтобы обратиться к полю, надо пройти через 2 двери. Надо и чтобы Derived не запрещал доступ к Base, и чтобы Base не запрещал доступ к своим полям.
+
+- protected
+```cpp
+struct Granny {
+    int x;
+    void f() {}
+};
+struct Mom : protected Granny {
+    int y;
+    void g() {}
+};
+struct Son : Mom {
+    int z;
+    void h() {
+        std::cout << x; // OK
+    }
+};
+int main() {
+    Son s;
+    s.z; // OK
+    s.y(); // OK
+    s.x; // CE
+}
+```
+- видимость и доступность полей и методов\
+частное предпочтительнее общего
+```cpp
+struct Base {
+    void f() {
+        std::cout << 1;
+    }
+};
+struct Derived : Base {
+    void f() {
+        std::cout << 2;
+    }
+};
+int main() {
+    Derived d;
+    d.f(); // 2
+}
+```
+Это не перегрузка функций. f() затмевает родительскую функцию. Функция из Base даже не рассматривается
+```cpp
+struct Base {
+    void f(int) {
+        std::cout << 1;
+    }
+};
+struct Derived : Base {
+    void f(double) {
+        std::cout << 2;
+    }
+};
+int main() {
+    Derived d;
+    d.f(0); // 2
+
+    // но можно вызвать явно
+    d.Base::f(0); // 1
+}
+```
+тут было еще много разных душных кейсов, которые я не захотел записывать
+
+
+# Лекция 18
+## Размещение объектов в памяти
+```cpp
+struct Base {
+    int x;
+};
+struct Derived : Base {
+    double y;
+};
+int main() {
+    std::cout << sizeof(Derived); // 16
+    // 4 (int) + 4 (padding) + 8 (double)
+}
+```
+- EBO (Empty Base Optimization)
+```cpp
+struct Base {
+    void f() {}
+};
+struct Derived : Base {
+    double y;
+    void g() {}
+};
+int main() {
+    std::cout << sizeof(Base);    // 1
+    std::cout << sizeof(Derived); // 8
+}
+```
+## Конструкторы, деструкторы при наследовании
+Сначала создаётся объект родителя (инциализация полей + конструтор), только потом объект наследника (инициализация полей + конструктор)
+```cpp
+struct Base {
+    int x;
+    Base(int x) : x(x) {}
+};
+struct Derived : Base {
+    int y;
+    Derived(int y) : y(y) {}
+};
+int main() {
+    Derived d = 3.14; // CE
+    // нет нужного конструктора для Base
+}
+```
+- явный вызов родительского конструктора
+```cpp
+struct Base {
+    int x;
+    Base(int x) : x(x) {}
+};
+struct Derived : Base {
+    int y;
+    Derived(int y) : Base(0), y(y) {}
+};
+int main() {
+    Derived d = 3.14; // OK
+}
+```
+- наследование конструкторов (C++ 11)
+```cpp
+struct Base {
+    int x;
+    Base(int x) : x(x) {}
+};
+struct Derived : Base {
+    int y = 0;
+    using Base::Base; // унаследовали конструктор из Base
+};
+```
+конструкторы копирования и перемещения не наследуется
+
+## Приведение типов при наследовании
+```cpp
+struct Base {
+    int x;
+};
+struct Derived : Base {
+    int y;
+}
+void f(Base& b) { // смотрим на Derived, как будто он Base
+    cout << b.x;
+}
+int main() {
+    Derived d;
+    f(d);
+}
+```
+аналогично для указателей
+```cpp
+void f(Base* b) {
+    cout << b->x;
+}
+int main() {
+    Derived d;
+    f(&d);
+}
+```
+можно и по значению
+```cpp
+// slicing
+// в новый объект явно скопируется та часть Base, которая внутри Derived
+// вызовется нетривиальный конструктор копирования, если он есть
+void f(Base b) {
+    cout << b.x;
+}
+int main() {
+    Derived d;
+    f(d);
+}
+```
