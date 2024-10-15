@@ -376,3 +376,515 @@ int main() {
     - резолвим вызовы всех функций
     - `.o -> executable`
 
+
+# Лекция 12
+## ООП
+- выравнивание полей\
+1-байтные переменные кладутся по адресам, кратным 1\
+2-байтные переменные кладутся по адресам, кратным 2\
+4-байтные переменные кладутся по адресам, кратным 4\
+8-байтные переменные кладутся по адресам, кратным 8\
+![alignment](img/6.png)
+
+The alignment of the struct is the alignment of the most-aligned field in it
+```cpp
+struct S {
+    int x = 1;
+    double d = 3.14;
+};
+// 16 байт (4 int, 4 padding, 8 double)
+```
+- гарантируется порядок полей в структуре
+- аггрегатная инициализация
+```cpp
+struct S {
+    int x = 1;
+    double d = 3.14;
+};
+int main() {
+    S s{2, 4.5};
+}
+```
+можно с именами, но в таком же порядке!
+```cpp
+struct xyz {
+    int a;
+    int b;
+    int c;
+};
+int main() {
+    xyz klm = { .a = 99, .c = 100 };
+}
+```
+
+- методы
+```cpp
+struct S {
+    void f(int x);
+    void g(int y) {
+        //...
+    }
+};
+void S::f(int x) {/*...*/} // qualified id
+```
+- this - указатель на объект\
+`->` обращение к полю/методу по указателю
+
+- inner class
+```cpp
+struct A {
+    int x = 1;
+    double d = 3.14;
+    struct AA {
+        char c;
+    };
+};
+int main() {
+    A::AA a;
+}
+```
+
+```cpp
+struct A {
+    int x = 1;
+    double d = 3.14;
+    struct AA { // можно даже без названия - анонимная структура
+        char c;
+    } a;
+};
+int main() {
+    A::AA a;
+}
+```
+
+- local class
+```cpp
+int main() {
+    struct S {
+        int x = 1;
+        int y = 2;
+    };
+    S s;
+}
+```
+
+## Модификаторы доступа
+- классы и структуры\
+в плюсах почти нет разницы. в стурктуре по умолчанию всё публичное, в классе приватное
+```cpp
+class C {
+    int x;
+};
+int main() {
+    C c;
+    c.x; // CE
+}
+```
+- public, private\
+к private можем обращаться только внутри методов
+- protected обсудим позже
+- !! приватность проверяется после перегрузки
+
+
+# Лекция 13
+## Друзья
+- функции или классы, которые не являются членами нашего класса, но им разрешен доступ к приватной части\
+объявляем через friend в любом месте внутри класса (определить можно и внутри, и снаружи)
+```cpp
+class C {
+private:
+    int x{5};
+    friend void g(C, int);
+    friend class CC; // все методы этого класса будут друзьями
+};
+
+void g(C c, int y) {
+    std::cout << c.x + y << "\n";
+}
+```
+
+## Конструкторы
+```cpp
+class Complex {
+    double re = 0.0;
+    double im = 0.0;
+public:
+    Complex (double real) {
+        re = real;
+    }
+};
+int main() {
+    // здесь 4 раза вызывается одинаковый конструктор
+    Complex c(5.0);
+    Complex c2 = 6.0;
+    // если есть хоть 1 конструктор, то аггрегатная инициализация перестаёт работать
+    Complex c3{7.0};
+    Complex c4 = {8.0};
+}
+```
+
+- uniform initialization
+```cpp
+struct Coord { int x, y; };
+struct BadGrid { BadGrid(int width, int height); };
+struct GoodGrid { explicit GoodGrid(int width, int height); };
+```
+![uniform initialization](img/7.png)
+[статья 1](https://quuxplusone.github.io/blog/2019/02/18/knightmare-of-initialization/)
+[статья 2](https://quuxplusone.github.io/blog/2022/06/03/aggregate-parens-init-considered-kinda-bad/)
+
+- member initializer list
+```cpp
+class Complex {
+    double re = 0.0;
+    double im = 0.0;
+public:
+    // re не проинициализируется 0 по умолчанию
+    // это выполнится перед конструктором
+    Complex (double re) : re(re) {}
+    Complex (double re, double im) : re(re), im(im) {} // желательно писать в таком же порядке
+};
+```
+
+- std::initializer_list (C++ 11)
+```cpp
+class String {
+    char* arr = nullptr;
+    size_t sz = 0;
+    size_t cap = 0;
+public:
+    String() {} // default constructor
+    
+    String(size_t n, char c) : arr(new char[n+1]), sz(n), cap(n+1) {
+        std::fill(arr, arr+n, c);
+        arr[sz] = '\0';
+    }
+
+    String(std::initializer_list<char> list)
+        : arr(new char[list.size()])
+        , sz(list.size())
+        , cap(sz+1)
+    {
+        std::copy(list.begin(), list.end(), arr);
+        arr[sz] = '\0';
+    }
+};
+
+int main() {
+    String s; // default initialization
+    String s2 = {'a', 'b', 'c'};
+    String s3 = {2, 'b'}; // тоже вызовется от std::initializer_list
+    // !! но если бы его не было, вызвался бы String(size_t n, char c)
+}
+```
+
+- если не объявляли конструкторы, то компилятор сгенерирует сам конструктор по умолчанию (он будет просто инциализировать поля по умолчанию). Если объявили хоть один конструктор, то комплиятор не будет этого делать. Но можно попросить (C++ 11)
+```cpp
+class String {
+    char* arr = nullptr;
+    size_t sz = 0;
+    size_t cap = 0;
+public:
+    String() = default; // explicitly declared, implicitly defined
+    
+    String(size_t n, char c) : arr(new char[n+1]), sz(n), cap(n+1) {
+        memset(arr, c, n);
+        // std::fill(arr, arr+n, c);
+        arr[sz] = '\0';
+    }
+};
+```
+
+- или можно запретить генерировать (C++ 11)
+```cpp
+class C {
+//...
+    C() = delete;
+};
+```
+
+- но не всегда может сгенерироваться конструктор по умолчанию
+```cpp
+class C {
+    // не знаем как проинициализировать по умолчанию
+    int& r;
+    const int c;
+};
+```
+
+## Деструкторы
+- вызываются в обратном порядке констуркторам (как стек). Сначала выполняется код деструктора нашего класса, а потом его полей.
+```cpp
+~String() {
+    delete[] arr;
+}
+```
+
+## Конструктор копирования
+- генерируется по умолчанию (просто копирует поля). Причем даже если есть и другие конструкторы
+- константная ссылка, хотя можно и без const
+- так же лучше делать с member initializer list
+```cpp
+String(const String& other)
+    : arr(new char[other.cap])
+    , sz(other.sz)
+    , cap(other.cap)
+{
+    memcpy(arr, other.arr, sz+1);
+}
+
+int main() {
+    String s(2, 'a');
+    String s2 = s; // конструктор копирования
+
+    String s3 = s3; // UB
+}
+```
+## Делегирующие конструкторы (C++ 11)
+- вызываем только 1 конструктор и нельзя использовать member initializer list
+```cpp
+class String {
+    char* arr = nullptr;
+    size_t sz = 0;
+    size_t cap = 0;
+
+    String(size_t n, char c) : arr(new char[n+1]), sz(n), cap(n+1) {
+        arr[sz] = '\0';
+    }
+public:
+    String() = default;
+
+    String(size_t n, char c) : String(n) {
+        memset(arr, c, n);
+    }
+    String(std::initializer_list<char> list) : String(list.size()) {
+        std::copy(list.begin(), list.end(), arr);
+    }
+    String(const String& other) : String(other.sz) {
+        memcpy(arr, other.arr, sz+1);
+    }
+};
+```
+
+## Оператор присваивания
+```cpp
+String& operator=(const String& other) {
+    if (this == other) { // в таком случае обязательно надо проверять!
+        return *this;
+    }
+    delete[] arr;
+    sz = other.sz;
+    cap = other.cap;
+    arr = new char[other.cap];
+    memcpy(arr, other.arr, sz+1);
+    return *this;
+}
+```
+
+- тоже можно попросить сгенерировать (но тоже не всегда получится)
+- идиома copy and swap
+```cpp
+void swap(String &other) {
+    std::swap(arr, other.arr);
+    std::swap(sz, other.sz);
+    std::swap(cap, other.cap);
+}
+String& operator=(const String& other) {
+    String copy = other; // конструктор копирования
+    swap(copy);
+    return *this;
+}
+```
+еще проще можно сделать так
+```cpp
+String& operator=(String other) { // конструктор копирования при вызове
+    swap(other);
+    return *this;
+}
+```
+в таких случаях можно не делать проверку на присваивание самому себе
+
+## Правило трех
+Реккомендация по написанию классов: Если в классе есть нетривиальный конструктор копирования, или нетривиальный оператор присваивания, или нетривиальный деструктор, то нужно чтобы все 3 они были нами написаны.
+
+
+# Лекция 15
+## Const, mutable
+- отсутствуют методы, которые явно не помечены, что должны присустствовать у константных объектов
+```cpp
+struct S {
+    void f() {
+        std::cout << "Hi!";
+    }
+};
+int main() {
+    const S s;
+    s.f(); // CE
+}
+```
+
+```cpp
+struct S {
+    void f() const {
+        std::cout << "Hi!";
+    }
+};
+int main() {
+    const S s;
+    s.f(); // OK
+}
+```
+вывод: все методы, которые, предполагается, что будут вызваны у константных объектов, надо помечать const
+- не имеет никакого отношения к конструкторам и деструкторам
+
+- в const методах нельзя вызывать неконстантные операции у полей
+```cpp
+struct S {
+    int x = 0;
+    void f() const {
+        ++x; // CE
+        std::cout << "Hi!";
+    }
+};
+```
+
+- перегрузка
+```cpp
+struct S {
+    void f() const {
+        std::cout << 1;
+    }
+    void f() {
+        std::cout << 2;
+    }
+};
+```
+
+- компилятор неявно навешивает const на все поля. Если это указатель, то он неявно превращается в const указатель (но не указатель на const!), то есть как будто появляется const справа. Однако на ссылку нельзя навесить const справа (подразумевается, что неизменными должны быть сами байты, которые кодируют ссылку, но не объект, на который она указывает). Поэтому для ссылок нет разницы между константным методом и обычным
+```cpp
+int x = 0;
+struct S {
+    int& r = x;
+    void f(int y) const {
+        r = y; // OK
+    }
+};
+```
+поэтому вот такой прикол
+```cpp
+struct S {
+    int x = 1;
+    int& r = x;
+    void f(int y) const {
+        r = y; // поменяет x в const методе
+    }
+};
+```
+
+- mutable (противоядие от const)
+```cpp
+struct S {
+    mutable int x = 1;
+    void f(int y) const {
+       x = y;
+    }
+};
+```
+
+## Static
+```cpp
+struct S {
+    static void f() {
+        std::cout << "Hi!";
+    }
+};
+int main() {
+    S::f();
+}
+```
+
+- нельзя внутри класса инициализировать неконстантные статические члены, но const можно
+```cpp
+struct S {
+    static int x = 10; // CE
+    const static int y = 5; // OK
+};
+int S::x = 1; // OK
+```
+
+- singleton 
+```cpp
+struct Singleton {
+private:
+    Singleton() {}
+    static Singleton* ptr;
+
+    Singleton(const Singleton&) = delete;
+    Signleton& operator=(const Singleton&) = delete;
+public:
+    static Singleton& getObject() {
+        if (ptr == nullptr) {
+            ptr = new Singleton();
+        }
+        return *ptr;
+    }
+    // добавить деструктор
+};
+Singleton* Singleton::ptr = nullptr;
+
+int main() {
+    Singleton& s = Singleton::getObject();
+}
+```
+
+## Приведение типов
+- explicit запрещает неявную конверсию\
+по кодстайлу рекомендуется делать так для конструкторов одного аргумента
+```cpp
+struct Latitude {
+    double value;
+    explicit Latitude(double value) : value(value) {}
+};
+```
+также с aggregate initialization
+```cpp
+struct BadGrid {
+    BadGrid(int width, int height);
+};
+struct GoodGrid {
+    explicit GoodGrid(int width, int height);
+};
+int main() {
+    BadGrid g1 = {10, 20}; // OK
+    GoodGrid g2 = {10, 20}; // CE
+}
+
+```
+
+- приведение типа к чему-то
+```cpp
+struct Latitude {
+    double value;
+    explicit Latitude(double value) : value(value) {}
+    operator double() const { // к double
+        return value;
+    }
+};
+```
+
+- но можно запретить неявную. Остается только явная (static_cast)
+```cpp
+struct Latitude {
+    double value;
+    explicit Latitude(double value) : value(value) {}
+    explicit operator double() const { // запретили неявную
+        return value;
+    }
+};
+```
+
+## Литеральные суффиксы
+- их можно определять)
+- `"sdfsadf"s // это std::string`
+
+
