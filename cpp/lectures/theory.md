@@ -1075,7 +1075,7 @@ struct Greater {
 }
 int main() {
     std::vector<int> v(10);
-    std::sort(v.begin(), v.end(), Greate());
+    std::sort(v.begin(), v.end(), Greater());
 }
 ```
 
@@ -1328,6 +1328,7 @@ struct Derived : Base {
 конструкторы копирования и перемещения не наследуется
 
 ## Приведение типов при наследовании
+основная идея наследования
 ```cpp
 struct Base {
     int x;
@@ -1343,6 +1344,7 @@ int main() {
     f(d);
 }
 ```
+
 аналогично для указателей
 ```cpp
 void f(Base* b) {
@@ -1355,7 +1357,7 @@ int main() {
 ```
 можно и по значению
 ```cpp
-// slicing
+// slicing (срезка при копировании)
 // в новый объект явно скопируется та часть Base, которая внутри Derived
 // вызовется нетривиальный конструктор копирования, если он есть
 void f(Base b) {
@@ -1366,3 +1368,440 @@ int main() {
     f(d);
 }
 ```
+
+# Лекция 19
+## [Приведение типов при наследовании](../oop/inheritance/theory.md#приведение-типов-при-наследовании)
+- публичное наследование
+![alt text](img/8.png)
+possibly UB - при попытке обращения к полям и методам Derived будет UB
+- приватное наследование\
+если мы не член класса и не друг, нам недоступен тот факт, что Derived это на самом деле Base
+![alt text](img/9.png)
+
+## [Множественное наследование](../oop/inheritance/theory.md#multiple-inheritance)
+![alt text](img/10.png)
+- как располагается в памяти
+![alt text](img/11.png)
+- как должен работать каст\
+сын - частный случай папы. Но адрес папы не такой, как адрес сына.
+Подобъект папы начинается с адреса на 4 большего, чем сам исходный объект.
+![alt text](img/12.png)
+по этому неявный каст должен сдвинуть адрес.
+Пример неявного каста одного указателя к другому, при котором численное значение адреса меняется
+![alt text](img/13.png)
+- если поля или методы называются одинаково
+![alt text](img/14.png)\
+Если в сыне объявили метод f, то дальше поиск не пойдет, он затмевает родительские - уже разбирали.
+Но если в сыне не будет метода f, то CE.
+Причем если просто унаследовали 2 одинаковых метода, то ничего не будет.
+Но если собираемся вызвать - уже CE.\
+![alt text](img/15.png)
+Тут Мещерин сказал, что будет перегрузка. Но её нет! Но можно явно вызвать нужный метод
+```cpp
+s.M::f(5);
+s.D::f(3.14);
+```
+## [Diamond problem](../oop/inheritance/theory.md#diamond-problem-ромбовидное-наследование)
+![alt text](img/16.png)
+![alt text](img/17.png)
+
+```cpp
+Son s;
+s.g; // CE - неоднозначность
+s.Granny::g; // CE - неоднозначность
+s.Mom::g; // OK
+```
+```cpp
+Granny& g = s; // CE - неоднозначный каст
+// нужно скастится к маме/папе, потом уже к бабушке
+```
+```cpp
+// если в бабушке метод void f()
+s.f(); // CE
+```
+- касты между родителями одного уровня
+![alt text](img/18.png)\
+так как не понятно, как сдвинуть адрес. В зависимости от того, как перечислены
+наследуемые классы, надо делать либо сдвиг вправо, либо сдвиг влево
+
+- inaccessible base class\
+к полям правой бабушки никак нельзя обратиться. Так не надо никогда делать\
+![alt text](img/19.png)
+
+- указатели на методы
+![alt text](img/20.png)\
+но в чем тут проблема?
+![alt text](img/21.png)
+указатель на метод хранит не только указатель на функцию, но и сдвиг объекта (на сколько байт начало того объекта, чей это метод, сдвинуто относительно начала того объекта, от которого мы вызвались)
+
+## [Виртуальное наследование](../oop/inheritance/theory.md#virtual-inheritance)
+Хотим, чтобы если мы 2 раза унаследуемся от одного и того же с разными промежуточными родителями, то этот прородитель не дублировался
+
+- virtual
+![alt text](img/22.png)
+
+- как это работает
+![alt text](img/23.png)
+ptr создается для тех классов, у которых есть виртуальный предок. ptr на самом деле указывает не сюда.
+для каждого из типов в статической памяти будет создана некоторая структура данных, в которой будет для каждого виртуального предка будет статически указан сдвиг относительно начала объекта это предка - vtable
+![alt text](img/24.png)
+
+- при виртуальном наследовании static_cast вниз не работает\
+не понятно, насколько сдвигаться - CE
+![alt text](img/25.png)
+
+- на самом деле таблица не одна на класс\
+чтобы уметь кастоваться от папы к бабушке, надо знать не только оффсет бабушки относительно сына, но и оффсет нашего текущего объекта от реального начала объекта - top offset (так как папа лежит не первый, ему надо прыгнуть на 32 - его оффсет)
+![alt text](img/26.png)
+в маме top offset 0, в папе 16
+
+- можно унаследовать класс один раз виртуально, другой раз не виртуально\
+![alt text](img/27.png)
+дальше опять куча примеров про какой-то бред
+
+
+# Лекция 20
+## [Виртуальные функции](../oop/polymorphism/theory.md#идея-виртуальных-функций)
+```cpp
+struct Base {
+    void f() {
+        std::cout << 1;
+    }
+};
+
+struct Derived : Base {
+    void f() {
+        std::cout << 2;
+    }
+};
+
+int main() {
+    Derived d;
+    Base& b = d;
+    b.f(); // 1
+}
+```
+но хотим, чтобы выполнялся частный случай
+```cpp
+struct Base {
+    virtual void f() {
+        std::cout << 1;
+    }
+};
+
+struct Derived : Base {
+    // можно так, но не обязательно
+    // virtual void f() {
+    void f() {
+        std::cout << 2;
+    }
+};
+
+int main() {
+    Derived d;
+    Base& b = d;
+    b.f(); // 2
+}
+```
+решение, какую функцию вызвать принимается в runtime\
+но вот так будет настоящая копия
+```cpp
+int main() {
+    Derived d;
+    Base b = d;
+    b.f(); // 1
+}
+```
+
+- полиморфный тип - у которого хотя бы 1 виртуальная функция (или хотя бы одна виртуальная функция унаследована)
+
+- деструктор
+```cpp
+struct Base {
+    virtual void f() {
+        std::cout << 1;
+    }
+};
+
+struct Derived : Base {
+    int* p = new int(0);
+    void f() {
+        std::cout << 2;
+    }
+    ~Derived(){
+        delete p;
+    }
+};
+
+int main() {
+    Base* b = new Derived();
+    delete b; // деструктор Base -> утечка памяти
+}
+```
+вывод: деструктор нужно делать виртуальным
+```cpp
+struct Base {
+    virtual void f() {
+        std::cout << 1;
+    }
+    virtual ~Base() = default;
+};
+```
+или без default, но тогда не сможем работать с объектом Base
+
+- сигнатура должна совпадать полностью
+```cpp
+struct Base {
+    void f() const {
+        std::cout << 1;
+    }
+};
+
+struct Derived : Base {
+    void f() {
+        std::cout << 3;
+    }
+};
+
+int main() {
+    Derived d;
+    Base& b = d;
+    b.f(); // 1
+}
+```
+так же с возвращаемым типом
+
+- [override](../oop/polymorphism/theory.md#override) может нас спасти (CE, если такой виртуальной функции нет у родителя) (C++ 11)\
+!никак не влияет на поведение работы с виртуальными фукнциями, просто добавляет CE, если такой функции нет - подсказка для нас самих
+```cpp
+struct Derived : Base {
+    void f() override {
+        std::cout << 3;
+    }
+};
+```
+
+- [final](../oop/polymorphism/theory.md#final) - запрещает всем дальнейшим наследникам переопределять функцию (с такой же сигнатурой) (C++ 11)
+```cpp
+struct Derived : Base {
+    void f() final {
+        std::cout << 3;
+    }
+};
+```
+`final` автоматически означает `override`. поэтому из слов `virtual`, `override`, `final` всегда требуется только одно
+
+- другой смысл для классов
+```cpp
+struct Derived final : Base {};
+```
+от Derived больше нельзя наследоваться
+
+- private
+```cpp
+struct Granny {
+    virtual void f() const {
+        std::cout << 1;
+    }
+};
+
+struct Mom : Granny {
+private:
+    void f() const override {
+        std::cout << 2;
+    }
+};
+
+struct Son : Mom {
+    void f() const final {
+        std::cout << 3;
+    }
+};
+
+int main() {
+    Mom m;
+    Granny& g = m;
+    g.f(); // 2
+}
+```
+виртуальные функции это runtime явления, а приватность - compile time. в compile time никак нельзя определить, какая функция будет выбрала в runtime.
+
+но!
+```cpp
+struct Granny {
+private:
+    virtual void f() const {
+        std::cout << 1;
+    }
+};
+
+struct Mom : Granny {
+    void f() const override {
+        std::cout << 2;
+    }
+};
+
+struct Son : Mom {
+    void f() const final {
+        std::cout << 3;
+    }
+};
+
+int main() {
+    Mom m;
+    Granny& g = m;
+    g.f(); // CE
+}
+```
+берем имя f() из бабушки, но оно приватно => CE
+
+- [абстрактный класс](../oop/polymorphism/theory.md#abstract-classes-and-pure-virtual-function) - есть хотя бы 1 pure virtual функция\
+аналог интерфейса
+```cpp
+struct Shape {
+    virtual double area() const = 0; // pure virtual
+    virtual ~Shape() = default;
+};
+```
+нельзя создать объект абстрактного типа, но можно создавать ссылки и указатели такого типа на потомков
+
+- но можно всё таки определить pure virtual функцию
+```cpp
+struct Shape {
+    virtual double area() const = 0;
+    virtual ~Shape() = default;
+};
+
+double Shape::area() {
+    return 0.0;
+}
+```
+
+- [полиморфизм](../oop/polymorphism/theory.md#что-такое-полиморфизм)
+```cpp
+struct Shape {
+    virtual double area() const = 0;
+    virtual ~Shape() = default;
+};
+
+struct Square : Shape {
+    double a;
+    Square(double a) : a(a) {}
+    double area() const override {
+        return a * a;
+    }
+};
+
+struct Circle : Shape {
+    double r;
+    Circle(double r): r(r) {}
+    double area() const override {
+        return 3.14159265358 * r * r;
+    }
+};
+
+int main() {
+    std::vector<Shape*> v;
+    v.push_back(new Square(1.0));
+    v.push_back(new Circle(1.0));
+    for (Shape* s : v) {
+        std::cout << s->area() << "\n";
+    }
+    for (Shape* s : v) {
+        delete s;
+    }
+}
+```
+
+- можно явно попросить вызвать родиельскую
+```cpp
+int main() {
+    Circle c(1.0);
+    c.Shape::area();
+}
+```
+
+# Лекция 21
+## [dynamic_cast](../casting/theory.md#5-rtti-and-dynamic_cast)
+- dynamic_cast (runtime cast) - только для для полиморфных типов (исходный тип должен быть полиморфным)
+```cpp
+struct Base {
+    virtual void f() {}
+    virtual ~Base() = default;
+};
+
+struct Derived : Base {
+    void f() override {}
+};
+
+int main() {
+    Derived d;
+    Base& b = d;
+    dynamic_cast<Derived&>(b);
+}
+```
+проверит, на самом ли деле под b лежит Derived&. иначе кинет std::bad_cast
+```cpp
+dynamic_cast<Derived*>(&b);
+```
+аналогично проверит, но вернет `nullptr`\
+довольная дорогая операция
+
+- можно делать каст от любого полиморфного типа к void*
+
+- умеет кастовать вбок (от мамы к папе) (исходный тип должен быть полиморфным)
+
+- можно делать dynamic_cast вверх, даже если тип не полиморфный (как и static_cast)
+
+- можно делать dynamic_cast вниз при виртуальном наследовании от полиморфного типа
+
+## RTTI
+- в каждом объекте полиморфного типа хранится runtime type information
+
+- оператор typeid\
+возвращает std::type_info
+```cpp
+std::cout << typeid(b).name(); // название типа, который реально был под ссылкой
+// const char*
+```
+работает и не для полиморфных типов\
+type_info можно сравнивать
+
+## [Расположение в памяти полиморфных объектов](../casting/theory.md#6-memory-layout-of-polymorphic-objects)
+формально не является стандартом C++
+
+- vtable
+![alt text](img/28.png)
+
+- наследования
+![alt text](img/29.png)
+каст от сына к бабушке должен сместить указатель (причем это умеет даже static_cast)\
+обратно сделать dynamic_cast уже не получится, т.к. бабушка не полиморфна (но static_cast можно в обе стороны!)
+
+# Лекция 22
+## Множественное наследование
+
+- обычное наследование
+![alt text](img/30.png)
+первый ptr общий для мамы и сына, второй для папы (они ведут в разные таблицы)
+![alt text](img/31.png)
+если вызываем f() из папы, но сам объект - сын, надо вычесть top offset, чтобы могли работать с полями сына
+
+- виртуальное наследование
+![alt text](img/32.png)
+virtual offset - оффсет виртуального родителя от начала\
+top offset - оффсет нашего объекта от реального начала
+
+## [Проблемы с виртуальными функциями](../casting/theory.md#8-non-obvious-problems-with-virtual-functions)
+
+- нельзя не определить виртуальную функцию (кроме pure virtual), так как компилятор должен сгенерировать vtable c указателем на функцию, а линкер не сможет ее найти
+
+- из конструктора вызывается не виртуальная функция, а обычная
+
+мне лень писать все примеры, потому что это полный бред. можно почитать по ссылке выше
+
+так же некоторые статьи:
+
+[Multiple Inheritance Considered Useful](https://www.drdobbs.com/cpp/multiple-inheritance-considered-useful/184402074) - статья про множественное наследование и виртуальные функции (в 7 страницах ☠️)
+
+[Shahar Mike's Web Spot](https://shaharmike.com/cpp/) - блог какого-то крутого чувака, где есть подробные статьи про vtables с разбором, как они работают и располагаются в памяти
