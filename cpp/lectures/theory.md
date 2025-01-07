@@ -2711,7 +2711,6 @@ int main() {
     print(1, 2.0, "abc");
 }
 ```
-- такое можно делать и в C-стиле [cppreference](https://en.cppreference.com/w/c/variadic)
 
 - `is_homogeneous`\
 проверяет, что все типы в пакете одинаковые
@@ -2736,6 +2735,9 @@ void print(const Head& head, const Tail&... tail) {
     print(tail...);
 }
 ```
+- такое можно делать и в C-стиле с помощью макросов [cppreference](https://en.cppreference.com/w/c/variadic)
+
+- также статья [C++20 idioms for parameter packs](https://www.scs.stanford.edu/~dm/blog/param-pack.html), но для прочтения надо хорошо понимать нововведения C++20
 
 
 # Лекция 26
