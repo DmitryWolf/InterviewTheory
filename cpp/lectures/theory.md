@@ -547,7 +547,7 @@ public:
 };
 ```
 
-- std::initializer_list (C++ 11)
+- std::initializer_list (C++11)
 ```cpp
 class String {
     char* arr = nullptr;
@@ -579,7 +579,7 @@ int main() {
 }
 ```
 
-- если не объявили конструкторы, то компилятор сгенерирует сам конструктор по умолчанию (он будет просто инциализировать поля по умолчанию). Если объявили хоть один конструктор, то комплиятор не будет этого делать. Но можно попросить (C++ 11)
+- если не объявили конструкторы, то компилятор сгенерирует сам конструктор по умолчанию (он будет просто инциализировать поля по умолчанию). Если объявили хоть один конструктор, то комплиятор не будет этого делать. Но можно попросить (C++11)
 ```cpp
 class String {
     char* arr = nullptr;
@@ -596,7 +596,7 @@ public:
 };
 ```
 
-- или можно запретить генерировать (C++ 11)
+- или можно запретить генерировать (C++11)
 ```cpp
 class C {
 //...
@@ -641,7 +641,7 @@ int main() {
     String s3 = s3; // UB
 }
 ```
-## Делегирующие конструкторы (C++ 11)
+## Делегирующие конструкторы (C++11)
 - вызываем только 1 конструктор и нельзя использовать member initializer list
 ```cpp
 class String {
@@ -980,7 +980,7 @@ int main() {
     a + b = c; // OK
 }
 ```
-надо фиксить так (C++ 11)
+надо фиксить так (C++11)
 ```cpp
 // применим только к lvalue
 Complex& operator=(const Complex &other) &  {/**/}
@@ -1021,7 +1021,7 @@ a == b == !(a < b) && !(b < a)
 a != b == a < b || b < a
 // но лучше равенство определить руками
 ```
-- operator spaceship (Three-way comparison) (C++ 20)\
+- operator spaceship (Three-way comparison) (C++20)\
 partial_ordering (<, >, =, не сравним)\
 weak_ordering (<, >, =)\
 strong_ordering (<, >, =) и еще `a == b => f(a) == f(b)`
@@ -1121,7 +1121,7 @@ int main() {
     std::cout << e; // OK
 }
 ```
-- enum class (C++ 11)
+- enum class (C++11)
 ```cpp
 enum class E {
     White,
@@ -1315,7 +1315,7 @@ int main() {
     Derived d = 3.14; // OK
 }
 ```
-- наследование конструкторов (C++ 11)
+- наследование конструкторов (C++11)
 ```cpp
 struct Base {
     int x;
@@ -1572,7 +1572,7 @@ int main() {
 ```
 так же с возвращаемым типом
 
-- [override](../oop/polymorphism/theory.md#override) может нас спасти (CE, если такой виртуальной функции нет у родителя) (C++ 11)\
+- [override](../oop/polymorphism/theory.md#override) может нас спасти (CE, если такой виртуальной функции нет у родителя) (C++11)\
 !никак не влияет на поведение работы с виртуальными фукнциями, просто добавляет CE, если такой функции нет - подсказка для нас самих
 ```cpp
 struct Derived : Base {
@@ -1582,7 +1582,7 @@ struct Derived : Base {
 };
 ```
 
-- [final](../oop/polymorphism/theory.md#final) - запрещает всем дальнейшим наследникам переопределять функцию (с такой же сигнатурой) (C++ 11)
+- [final](../oop/polymorphism/theory.md#final) - запрещает всем дальнейшим наследникам переопределять функцию (с такой же сигнатурой) (C++11)
 ```cpp
 struct Derived : Base {
     void f() final {
@@ -1841,14 +1841,14 @@ class vector {
 };
 ```
 
-- шаблоны using (C++ 11)
+- шаблоны using (C++11)
 ```cpp
 template <typename T>
 using mymap = std::map<T, T, std::greater<T>>;
 ```
 
-- шаблоны переменных (constexpr) (C++ 14)\
-разберём позже
+- шаблоны переменных (constexpr) (C++14) - разберём позже
+- концепты (C++20) - разберём позже
 
 - выведение шаблонного параметра (Template argument deduction)
 ```cpp
@@ -1863,7 +1863,7 @@ long long b = 1;
 swap(a, b); // не понятно, какой T имеется в виду
 ```
 
-- кодогенерация\
+- кодогенерация - главная идея шаблонов!\
 глядя на то, от каких T мы вызываемся, компилятор должен понять, какой код сгенерировать
 ```cpp
 int a1 = 0, b1 = 1;
@@ -1880,7 +1880,7 @@ swap(a1, a2); // CE
 ```cpp
 swap<long long>(a1, b1); // CE
 ```
-теперь будет CE, из-за того, что нельзя проинициализировать ссылку на long long через int, но если принимать по значению - OK (сделается каст от int к long long)
+теперь будет CE, из-за того, что нельзя проинициализировать неконстантную ссылку на long long через int, но если принимать по значению - OK (сделается каст от int к long long)
 
 - с классами аналогично
 ```cpp
@@ -1888,7 +1888,7 @@ std::vector<int> v;
 std::vector<double> v; // сгенерирует 2 абсолютно разных класса
 
 v2 = v; // CE, нет конверсии от одного к другому
-// т.к. 2 абсолютно разных класса
+// т.к. это 2 абсолютно разных класса
 ```
 
 ## Перегрузка шаблонных функций
@@ -1905,7 +1905,8 @@ int main() {
     f(x); // OK, выберется 2 версия
 }
 ```
-(поправка) на самом деле если есть выбор между шаблонной версией и не шаблонной, то это решение принимается раньше, до того, как компилятор начинет генерировать шаблонную версию
+(поправка к теме кодогенерации)\
+на самом деле, если есть выбор между шаблонной версией и не шаблонной, то это решение принимается раньше - до того, как компилятор начинет генерировать шаблонную версию. в примере выше шаблонная версия не сгенерируется. (на самом деле это тоже не совсем правда, дальше будет 2 поправка)
 
 !но, если частная версия не так хорошо подходит, как общая, то выберется общая
 ```cpp
@@ -1919,6 +1920,9 @@ int main() {
     f(x); // сгенерируется шаблонная для int
 }
 ```
+итого есть 2 правила:
+1) частное лучше общего
+2) не смотря на это, точное соответствие лучше чем хоть какой-то каст
 
 но, опять же, можно указать явно
 ```cpp
@@ -1934,11 +1938,13 @@ void f(int x) {
 int main() {
     int x = 0;
     f<long long>(x); // 1
-    f<int>(x); // 1, обязываем компилятор выбрать шаблонную
+    f<int>(x); // 1, обязываем компилятор выбрать именно шаблонную версию
 }
 ```
+здесь нет deduction, поэтому всё проще
 
-- шаблонные аргументы по умолчанию
+- шаблонные аргументы по умолчанию\
+они должны быть последними, как и обычные аргументы у функций
 ```cpp
 template <typename T = int>
 void f(T x) {}
@@ -1970,6 +1976,7 @@ int main() {
     f(x); // CE
 }
 ```
+здесь CE будет и без шаблонов\
 но
 ```cpp
 f(1); // 2
@@ -1993,7 +2000,7 @@ class vector<bool> {
     size_t cap;
 };
 ```
-
+в шаблонном префиксе указываем те аргументы, которые пригодятся для объяснения, какую именно специализацию хотим объявить (`template <>` - ничего не нужно для этой специализации), а дальше указываем саму специализацию справа от названия класса
 ```cpp
 template <typename T, typename U>
 class S {};
@@ -2002,7 +2009,9 @@ class S {};
 template <typename T>
 class S<T, T> {};
 ```
+`template <typename T>` - нужен T
 
+можно делать так
 ```cpp
 template <typename T>
 class S {};
@@ -2013,6 +2022,15 @@ class S<T&> {};
 template <typename T>
 class S<const T> {};
 ```
+но, нельзя переопределять классы с другим количеством шаблонных параметров
+```cpp
+template <typename T, typename U>
+struct A {};
+
+template <typename T> // CE
+struct A {};
+```
+не существует перегрузки классов!
 
 # Лекция 24
 ## Cпециализации шаблонов
@@ -2035,6 +2053,13 @@ int main() {
 вторая версия более частная
 
 - окунаемся
+
+для функций запрещена частичная специализация
+
+но можно переопределять функцию с другим количеством шаблонных параметров (в отличии от классов), т.к. у функций есть перегрузка. здесь №2 не является специализацей №1
+
+для функций можно делать только полную специализацию `template <>`. здесь №3 - специализация для №1, но №2 выигрывает, т.к. она исходно более частная, чем №1
+
 ```cpp
 template <typename T, typename U>
 void f(T, U) {
@@ -2053,6 +2078,7 @@ int main() {
     f(0, 0); // 2
 }
 ```
+но, если поменять местами, №3 - уже специализация для №2. и тогда выигрывает ветка №2, а именно её специализация - №3
 
 ```cpp
 template <typename T, typename U>
@@ -2072,7 +2098,7 @@ int main() {
     f(0, 0); // 3
 }
 ```
-
+помимо всего прочего, можно объявить вообще не шаблонную функцию
 ```cpp
 template <typename T, typename U>
 void f(T, U) {
@@ -2094,12 +2120,44 @@ int main() {
     f(0, 0); // 4
 }
 ```
-на самом деле: сначала из шаблонов выбирается наиболее подходящий или принимается решение, что шаблон не нужен вообще. потом в подходящий шаблон подставляются аргументы и генерируются нужные версии. затем делается перегрузка между тем, что получилось
+здесь у нас как бы 3 версии (ветки) перегрузки, у одной из которых есть ещё специализация: шаблонная версия №1 с 2 параметрами, шаблонная версия №2 с 1 параметром, обычная версия №4 - не шаблонная, а у шаблонной версии №2 есть частный случай - №3
 
-- для функций запрещена частичная специализация
+(2 поправка к теме кодогенерации)\
+на самом деле: компилятор смотрит на версии перегрузки (их здесь 3 - №1,№2,№4). но у некоторых из них ещё могут быть специализации (№2). тем не менее, компилятор сначала выбирает между версиями перегрузки, а потом уже решает, нет ли у неё специализации, подходящей для данного случая.
+
+сначала из шаблонов выбирается наиболее подходящий шаблон или принимается решение, что шаблон не нужен вообще (как в последнем примере). потом в подходящий шаблон (если был выбран шаблон) подставляются аргументы, и решается, какая из специализаций подходит лучше всего. то есть генерируются версии для специализаций и делается перегрузка между тем, что получилось
+
+последний пример
+```cpp
+template <typename T, typename U>
+void f(T, U) {
+    std::cout << 1;
+}
+template <>
+void f(int, int) {
+    std::cout << 3;
+}
+template <typename T>
+void f(T, T) {
+    std::cout << 2;
+}
+template <>
+void f(int, int) {
+    std::cout << 4;
+}
+
+int main() {
+    f(0, 0); // 4
+}
+```
+здесь №3 - специализация №1, №4 - специализация №2. при первом выборе версии перегрузки выберется №2, т.к. она более частная, а дальше выберется специализация №4, т.к. она лучшая
+
+хыхы пон, удачи это запомнить
 
 ## Non-type template parameters (nttp)
 не только типы могут быть параметрами шаблона
+
+(в C++20 всё изменилось) - обсудим позже
 
 - целочисленные типы, char, bool
 ```cpp
@@ -2139,11 +2197,29 @@ const int x = 5;
 Matrix<x, x> m; // OK
 Matrix<5, 5> m2; // OK
 ```
+но, очевидно
+```cpp
+int x;
+std::cin >> x;
+const int y = x;
+Matrix<y, y> m; // CE, 'y' is not usable in constant expression
+```
 
-- constexpr (C++ 11)\
+- constexpr (C++11) - забегаем вперёд\
 гарантирует, что значение переменной известно, в момент компиляции
 
+```cpp
+int x; cin >> x;
+constexpr int y = x; // CE именно на этой строчке
+Matrix<y, y> m;
+```
+строго говоря, в шаблоны мы можем передавать именно такие константы
+
+
 ## Шаблонные аргументы, которые сами являются шаблонами
+Template template parameters
+
+хотим указать, что шаблонным параметром является другой шаблонный класс
 
 ```cpp
 template <typename T, template <typename> class Container>
@@ -2151,14 +2227,14 @@ class Stack {
     Container<T> container;
 };
 ```
-с C++ 11 можно
+тут есть разница между class и typename. до C++17 надо было писать class. начиная с C++17 можно typename
 ```cpp
 template <typename T, template <typename> typename Container>
 class Stack {
     Container<T> container;
 };
 ```
-
+здесь Container это не конечный тип, а шаблон. его нужно параметризовать типом уже в теле класса
 ```cpp
 template <typename T, template <typename, typename> typename Container = std::vector>
 class Stack {
@@ -2166,7 +2242,7 @@ class Stack {
 };
 ```
 
-- адаптеры над контейнерами (`std::stack`, `std::queue`, `std::priotiry_queue`) принимают вторым шаблонным аргументом конкретный тип контейнера (`std::vector<T>`) из-за аллокатора
+- адаптеры над контейнерами (`std::stack`, `std::queue`, `std::priority_queue`) принимают вторым шаблонным аргументом конкретный тип контейнера (`std::vector<T>`) из-за аллокатора. Без этого мы бы не смогли туда передавать контейнер без аллокатора, например свой кастомный контейнер
 
 ## Compile time вычисления
 
@@ -2182,7 +2258,7 @@ int main() {
     std::cout << Fibonacci<20>::value;
 }
 ```
-
+`static` - хотим сделать поле частью типа, а не одного объекта
 ```cpp
 template <size_t N>
 struct Fibonacci {
@@ -2203,7 +2279,19 @@ int main() {
     std::cout << Fibonacci<20>::value; // O(n) по памяти и времени
 }
 ```
-
+на самом деле даже с -O0 такое оптимизируется
+[godbolt](https://godbolt.org/z/6rWhjr4oT)
+```cpp
+main:
+        push    rbp
+        mov     rbp, rsp
+        mov     esi, 6765
+        mov     edi, OFFSET FLAT:std::cout
+        call    std::basic_ostream<char, std::char_traits<char> >::operator<<(int)
+        mov     eax, 0
+        pop     rbp
+        ret
+```
 - проверка числа на простоту
 ```cpp
 template<int N, int D>
@@ -2231,7 +2319,7 @@ int main() {
 }
 ```
 
-- шаблонная переменная
+- шаблонная переменная (C++14)
 ```cpp
 template <int N>
 const bool is_prime = IsPrime<N>::value; // метафункция
@@ -2254,8 +2342,42 @@ int main() {
 ## Dependent names
 когда мы работаем с шаблонами, компилятор не всегда знает, является ли имя функцией, типом или чем-то другим, что приводит к потенциальным ошибкам при компиляции
 
+```cpp
+template <typename T>
+struct S {
+    using A = int;
+};
+
+template <>
+struct S<double> {
+    static const int A = 5;
+};
+
+// int x = 0;
+
+template <typename T>
+void f() {
+    S<T>::A* x; // CE, error: dependent-name ‘S<T>::A’ is parsed as a non-type, but instantiation yields a type
+}
+
+int main() {
+    f<int>();
+}
+```
+в одной из версий шаблона имя может обозначать тип, а в другой переменную. `int* x` или `5*x` -> declaration или expression?
+(представим, что есть глобальная переменная x)
+
+- по дефолту компилятор считает, что все dependent names это expression
+
 - перед зависимым именем надо писать `typename`, чтобы компилятор парсил его как названия типа, а не как expression
 
+```cpp
+template <typename T>
+void f() {
+    typename S<T>::A* x;
+}
+```
+ещё пример
 ```cpp
 template <typename T>
 void printValue() {
@@ -2268,19 +2390,122 @@ void printValue() {
     typename T::value_type x; // OK, typename указывает компилятору, что это тип
 }
 ```
-- иногда надо будет еще написать `template`
+начиная с C++20 количество контекстов, в которых он воспринимает это как переменную уменьшилось
 
-у мещерина тут опять бредовые примеры. сейчас мне не кажется это сильно полезным, поэтому не буду это писать
+- другая проблема
+```cpp
+#include <array>
 
-но почитать можно тут [cppreference](https://en.cppreference.com/w/cpp/language/dependent_name)
+template <typename T>
+struct S {
+    template <int N>
+    using A = std::array<int, N>;
+};
 
-- two phase translation
+template <>
+struct S<double> {
+    static const int A = 5;
+};
 
-## type_traits (С++ 11)
+template <typename T>
+void f() {
+    typename S<T>::A<10> x; // CE (хотя в новых версиях g++ такой проблемы нет)
+}
 
-- метафункции - функции от типов
-- is_same\
-хотим проверить, равны ли типы
+int main() {
+    f<int>();
+}
+```
+такое можно распарсить, как `A < 10 > x`. слова `typename` здесь не достаточно. оно заставляет компилятор считать это названием типа, но не шаблона
+
+решение
+```cpp
+template <typename T>
+void f() {
+    typename S<T>::template A<10> x;
+}
+```
+- ещё пример
+```cpp
+template <typename T>
+struct S {
+    template <int N>
+    void foo(int) {}
+};
+
+template <typename T>
+void bar(int x, int y) {
+    S<T> s;
+    s.foo<5>(x + y); // CE, error: invalid operands of types ‘<unresolved overloaded function type>’ and ‘int’ to binary ‘operator<’
+}
+
+int main() {
+    bar<int>(2, 3);
+}
+```
+аналогично, такое можно распарсить, как `s.foo < 5 > (x + y)`.
+
+решение
+```cpp
+template <typename T>
+void bar(int x, int y) {
+    S<T> s;
+    s.template foo<5>(x + y);
+}
+```
+
+- пример с наследованием
+```cpp
+template <typename T>
+struct Base {
+    int x = 0;
+};
+
+template <>
+struct Base<double> {};
+
+template <typename T>
+struct Derived : Base<T> {
+    void f() {
+        ++x; // CE, error: ‘x’ was not declared in this scope
+    };
+};
+```
+в зависимости от T, x может как присустствовать, так и отсутствовать в классе. может были либо полем, либо названием типа, либо названием метода.
+
+решение
+```cpp
+template <typename T>
+struct Derived : Base<T> {
+    void f() {
+        ++this->x;
+    };
+};
+```
+если хотим обратиться к полю шаблонного родителя, надо писать `this`.
+
+или
+```cpp
+template <typename T>
+struct Derived : Base<T> {
+    void f() {
+        ++Base<T>::x;
+    };
+};
+```
+
+- почитать ещё можно тут [cppreference](https://en.cppreference.com/w/cpp/language/dependent_name)
+
+- two phase translation ([Two-phase name lookup](https://en.cppreference.com/w/cpp/language/two-phase_lookup))\
+компилятор генерирует шаблонный код в 2 прохода. 1) до того, как мы подставили T. мы смотрим на синтаксис и базовые семантические проверки (имена, не зависимые от T). 2) после подстановки T. там всплывают другие ошибки. поэтому часто, если не использовали какой-то шаблонный код, то много ошибок компиляции может не найтись. но как только мы инстанцировали шаблон, выпадет куча ошибок.
+
+## type_traits (C++11)
+
+- метафункции - функции от типов\
+функции (в обобщённом смысле), которые принимают типы и возвращают типы/значения
+- [`std::is_same`](https://en.cppreference.com/w/cpp/types/is_same)
+
+простейшая метафункция - хотим проверить, равны ли 2 типа
 ```cpp
 template <typename T, typename U>
 struct is_same {
@@ -2295,8 +2520,8 @@ struct is_same<T, T> {
 template <typename T, typename U>
 void f(const T& x, const U& y) {
     // ...
-    if constexpr (is_same<T, U>::value) { // C++ 17
-
+    if constexpr (is_same<T, U>::value) { // C++17
+        x = y; // здесь можно делать что-то, что применимо только к к одинаковым типам
     }
     // ...
 }
@@ -2305,9 +2530,11 @@ void f(const T& x, const U& y) {
 
 под `if constexpr` проверится compile time условие. Если оно ложно, код под ифом даже не сгенерируется для данной пары
 
-`std::is_same`
+если написать только `if`, но код ниже всё равно будет пытаться скомпилироваться, даже для разных типов. сама проверка произойдёт только в рантайме. поэтому код сверху даже не скомпилируется, т.к. нельзя присвоить инту строку
 
-- remove_reference
+
+
+- [`std::remove_reference`](https://en.cppreference.com/w/cpp/types/remove_reference)
 ```cpp
 template <typename T>
 struct remove_reference {
@@ -2324,9 +2551,8 @@ void f() {
     typename remove_reference<T>::type x;
 }
 ```
-`std::remove_reference`
 
-- remove_const
+- [`std::remove_const`](https://en.cppreference.com/w/cpp/types/remove_cv)
 ```cpp
 template <typename T>
 struct remove_const {
@@ -2338,10 +2564,63 @@ struct remove_const<const T> {
     using type = T;
 };
 ```
-`std::remove_const`
 
-- conditional\
-тернарый мета оператор
+- [`std::integral_constant`](https://en.cppreference.com/w/cpp/types/integral_constant)\
+грубо говоря, просто константа конкретного типа
+```cpp
+template<class T, T v>
+struct integral_constant {
+    static constexpr T value = v;
+    // ...
+};
+```
+частные случаи для bool
+```cpp
+template< bool B >
+using bool_constant = integral_constant<bool, B>;
+```
+```cpp
+std::true_type  // std::integral_constant<bool, true>
+std::false_type // std::integral_constant<bool, false>
+```
+
+- [`std::is_array`](https://en.cppreference.com/w/cpp/types/is_array)
+```cpp
+template<class T>
+struct is_array : std::false_type {};
+ 
+template<class T>
+struct is_array<T[]> : std::true_type {};
+ 
+template<class T, std::size_t N>
+struct is_array<T[N]> : std::true_type {};
+```
+аналогично, как писали до этого. просто для простоты наследуемся от `std::true_type` и `std::false_type`
+
+- [`std::is_member_pointer`](https://en.cppreference.com/w/cpp/types/is_member_pointer)
+```cpp
+template<class T>
+struct is_member_pointer_helper : std::false_type {};
+ 
+template<class T, class U>
+struct is_member_pointer_helper<T U::*> : std::true_type {};
+ 
+template<class T>
+struct is_member_pointer : is_member_pointer_helper<typename std::remove_cv<T>::type> {};
+```
+
+- [`std::rank`](https://en.cppreference.com/w/cpp/types/rank) - размерность массива (количество скобок `[]`)
+```cpp
+template<class T>
+struct rank : public std::integral_constant<std::size_t, 0> {};
+ 
+template<class T>
+struct rank<T[]> : public std::integral_constant<std::size_t, rank<T>::value + 1> {};
+ 
+template<class T, std::size_t N>
+struct rank<T[N]> : public std::integral_constant<std::size_t, rank<T>::value + 1> {};
+```
+- [`std::conditional`](https://en.cppreference.com/w/cpp/types/conditional) - тернарый мета оператор
 ```cpp
 template <bool B, typename T, typename F>
 struct conditional {
@@ -2353,18 +2632,55 @@ struct conditional<true, T, F> {
     using type = T;
 };
 ```
-`std::conditional`
+
+- [`std::remove_extent`](https://en.cppreference.com/w/cpp/types/remove_extent) - удаляет все скобочки `[]` из типа (делает из массива обычный тип)
+```cpp
+template<class T>
+struct remove_extent { using type = T; };
+ 
+template<class T>
+struct remove_extent<T[]> { using type = T; };
+ 
+template<class T, std::size_t N>
+struct remove_extent<T[N]> { using type = T; };
+```
+
+- [`std::decay`](https://en.cppreference.com/w/cpp/types/decay) - снимает с типа все возможные украшения
+
+массив превращает в поинтер, функцию или ссылку на функцию в поинтер, остальное - `std::remove_cv`
+```cpp
+template<class T>
+struct decay
+{
+private:
+    typedef typename std::remove_reference<T>::type U;
+public:
+    typedef typename std::conditional< 
+        std::is_array<U>::value,
+        typename std::add_pointer<typename std::remove_extent<U>::type>::type,
+        typename std::conditional< 
+            std::is_function<U>::value,
+            typename std::add_pointer<U>::type,
+            typename std::remove_cv<U>::type
+        >::type
+    >::type type;
+};
+```
 
 - [все функции](https://en.cppreference.com/w/cpp/header/type_traits)
 
-- лучше не использовать все эти структуры в чистом виде, а использовать шаблонные using (C++ 14)
+это всё появилось в C++11, а также шаблонные using. в C++14 доопределили структуры, которые возвращали тип (`::type`), шаблонными using для удобства. но также в C++14 добавили шаблонные переменные. в C++17 доопределили структуры, которые возвращали значения (`::value`), шаблонными переменными
+
+вот такой вот хихик
+
+- лучше не использовать все эти структуры в чистом виде, а использовать шаблонные using (C++14)
 ```cpp
 template <bool B, typename T, typename F>
 using conditional_t = typename conditional<B, T, F>::type;
 ```
 `_t` в конце
 
-- а еще шаблонные переменные (C++ 17)
+- а еще шаблонные переменные (C++17)
 ```cpp
 template <typename T, typename U>
 const bool is_same_v = is_same<T, U>::value;
@@ -2372,17 +2688,19 @@ const bool is_same_v = is_same<T, U>::value;
 `_v` в конце
 
 ## Variadic templates
-- шаблоны с переменным количеством аргументов (C++ 11)
+- шаблоны с переменным количеством аргументов (C++11)
 ```cpp
 template <typename... Types> // объявили пачку типов
 void f(Types... tx) { // распаковали пачку типов
-    g(tx...);
+    // теперь tx это пачка переменных
+    g(tx...); // её можно распаковать дальше
 }
 ```
-
+эти типы могут быть разными! при этом, пакет может быть и пустым
 ```cpp
-void print() {}
+void print() {} // база рекурсии
 
+// хотя бы 1 аргумент должен быть
 template <typename Head, typename... Tail>
 void print(const Head& head, const Tail&... tail) {
     std::cout << head << ' ';
@@ -2393,8 +2711,9 @@ int main() {
     print(1, 2.0, "abc");
 }
 ```
+- такое можно делать и в C-стиле [cppreference](https://en.cppreference.com/w/c/variadic)
 
-- is_homogeneous\
+- `is_homogeneous`\
 проверяет, что все типы в пакете одинаковые
 ```cpp
 template <typename First, typename Second, typename... Types>
@@ -2407,8 +2726,9 @@ struct is_homogeneous<First, Second> {
     static constexpr bool value = std::is_same_v<First, Second>;
 };
 ```
+т.к. нельзя переопределять классы с другим количеством шаблонных параметров. поэтому здесь вторая стуктура - специализация первой с пустым пакетом аргументов
 
-- sizeof...()
+- оператор `sizeof...()` - в compile time возвращает размер пакета
 ```cpp
 template <typename Head, typename... Tail>
 void print(const Head& head, const Tail&... tail) {
@@ -2416,3 +2736,148 @@ void print(const Head& head, const Tail&... tail) {
     print(tail...);
 }
 ```
+
+
+# Лекция 26
+## Выражения свёртки
+
+- [Fold expressions](https://en.cppreference.com/w/cpp/language/fold) - C++17
+
+берем expression, в котором фигурирует пакет и бинарным оператором его соединяем с многоточием. и это всё выполняется в compile time
+```cpp
+template <typename... Types>
+struct all_pointers {
+    static constexpr bool value = (std::is_pointer_v<Types> && ...);
+    // обязательно скобки!
+};
+```
+обозначает: для всех типов из пакета повторить `std::is_pointer_v` через конъюнкцию
+
+- `is_homogeneous`
+
+```cpp
+template <typename Head, typename... Tail>
+struct is_homogeneous {
+    static constexpr bool value = (std::is_same_v<Head, Tail> && ...);
+};
+```
+проверяем, что Head равен всем в Tail
+
+- `print`
+```cpp
+template <typename... Types>
+void print(const Types&... types) {
+    (std::cout << ... << types);
+    std::cout << "\n";
+}
+
+int main() {
+    print();
+    print(1, 2, "sdf");
+}
+```
+можно через пробел
+```cpp
+template <typename... Types>
+void print(const Types&... types) {
+    ((std::cout << types << ' '), ...);
+    std::cout << "\n";
+}
+
+int main() {
+    print();
+    print(1, 2, "sdf");
+}
+```
+
+- как это раскрывается\
+тут есть разная ассоциативность
+![alt text](img/33.png)
+
+## CRTP - [Curiously recurring template pattern](https://ru.wikipedia.org/wiki/Curiously_recurring_template_pattern)
+[cppreference](https://en.cppreference.com/w/cpp/language/crtp)
+
+```cpp
+template <typename T>
+struct Base {
+    void interface() {
+        // ...
+        static_cast<T*>(this)->implementation();
+        // ...
+    }
+    static void static_func() {
+        // ...
+        T::static_sub_func();
+        // ...
+    }
+};
+
+struct Derived : Base<Derived> {
+    void implementation() {}
+    static void static_sub_func() {}
+};
+```
+`Base` знает, что `T` это его потомок. благодаря этому, мы можем имитировать поведение виртуальных функций
+
+`interface()` определена у базового класса, но для разных `T` она себя ведёт по-разному.
+
+в `Base` нельзя объявить объект типа `T` - получится циклическая зависимость. Но можно объявить `T*` или `T&`.
+
+функция `Base<Derived>::interface()` известна компилятору, хотя и объявлена перед объявлением структуры `struct Derived`. Тем не менее, эта функция не инстанцируется до момента фактического вызова, который должен произойти после объявления `Derived`.
+
+```cpp
+template <typename T>
+struct Base {
+    void interface() {
+        static_cast<T*>(this)->implementation();
+    }
+};
+
+struct A : Base<A> {
+    void implementation() {
+        std::cout << "A::implementation()" << std::endl;
+    }
+};
+struct B : Base<B> {
+    void implementation() {
+        std::cout << "B::implementation()" << std::endl;
+    }
+};
+
+template <typename T>
+void f(Base<T>& b) {
+    b.interface();
+}
+
+int main() {
+    A a;
+    B b;
+    f(a); // A::implementation()
+    f(b); // B::implementation()
+}
+```
+но это не совсем честный полиморфизм, потому что, например, нельзя сделать контейнер базового класса, в отличии от динамического полиморфизма
+```cpp
+int main() {
+    A a;
+    B b;
+    std::vector<Base<?>> v;
+    v.push_back(a);
+    v.push_back(b);
+    for (auto obj : v) {
+        obj.interface();
+    }
+}
+```
+
+## [Expression templates](https://en.wikipedia.org/wiki/Expression_templates)
+Способ создавать структуры, представляющие compile time вычисления, где выражения вычисляются по мере необходимости
+
+Пример - складывание геометрических векторов. Если мы не хотим считать сумму векторов целиком, а только получить какой-то i-ый элемент (ленивое складывание)
+
+Код можно посмотреть в википедии, не буду копировать его сюда
+
+## Исключения
+TODO
+
+
