@@ -2711,7 +2711,6 @@ int main() {
     print(1, 2.0, "abc");
 }
 ```
-- такое можно делать и в C-стиле [cppreference](https://en.cppreference.com/w/c/variadic)
 
 - `is_homogeneous`\
 проверяет, что все типы в пакете одинаковые
@@ -2736,6 +2735,9 @@ void print(const Head& head, const Tail&... tail) {
     print(tail...);
 }
 ```
+- такое можно делать и в C-стиле с помощью макросов [cppreference](https://en.cppreference.com/w/c/variadic)
+
+- также статья [C++20 idioms for parameter packs](https://www.scs.stanford.edu/~dm/blog/param-pack.html), но для прочтения надо хорошо понимать нововведения C++20
 
 
 # Лекция 26
@@ -2878,6 +2880,1027 @@ int main() {
 Код можно посмотреть в википедии, не буду копировать его сюда
 
 ## Исключения
-TODO
+- `throw` - альтернативый способ выйти из функции на ряду с `return`
+```cpp
+int divide(int a, int b) {
+    if (b == 0) {
+        throw std::logic_error("Divide by zero!");
+    }
+    return a / b;
+}
+```
+происходит раскрутка стека. уничтожаются локальные переменные в порядке, обратном созданию (как и при обычном выходе из функции), и мы выскакиваем на уровень выше.
 
+в какой момент это прекращается?
+
+-  `try+catch` - ловим исключение\
+```cpp
+try {
+    divide(10, 0);
+} catch (std::logic_error& err) {
+    std::cout << err.what() << std::endl;
+}
+```
+исключение может прилететь и из глубины, если его ещё никто не поймал. есть будет подходящий catch, то мы поймаем исключение. ловить можно по значению, ссылке, константной 
+
+можно писать `catch(...)` - ловим любое исключение
+
+исключения - очень тяжеловесная операция
+
+- комментарий про раскручивание стека
+![alt text](img/36.png)
+
+- какие операторы стандартной библиотеки бросают исключения
+    - `throw`
+    - оператор `new` - `std::bad_alloc`
+    ```
+    terminate called after throwing an instance of 'std::bad_alloc'
+    what():  std::bad_alloc
+    Aborted (core dumped)
+    ```
+    [std::terminate](https://en.cppreference.com/w/cpp/error/terminate) - бросается рантаймом C++ если исключение брошено и не поймано (и много других пунктов)\
+    [std::abort](https://en.cppreference.com/w/cpp/utility/program/abort) - бросается после terminate, просит ос убить программу с вердиктом abort (сишная функция)
+    - `dynamic_cast` к ссылке - `std::bad_cast`
+    - `typeid` от nullptr - `std::bad_typeid`
+
+## Разница между исключением и runtime error
+- runtime error
+```cpp
+try {
+    std::vector<int> v;
+    v[1'000'000] = 1; // Segmentation fault (core dumped)
+} catch(...) {
+    std::cout << "Caught!\n";
+}
+```
+```cpp
+int x; std::cin >> x;
+try {
+    std::cout << 5/x; // Floating point exception (core dumped)
+} catch(...) {
+    std::cout << "Caught!\n";
+}
+```
+это не плюсовый exception! это исключительная ситуация процессора
+
+`Segmentation fault`, `Floating point exception`, `Aborted` - виды RE, но далеко не все из них обусловлены плюсовыми exception. если падаем из-за плюсового exception, то низкоуровневая причина падения - `Aborted`.
+
+плюсовые exception - уровень абстракции над этим всем. `std::runtime_error` - частный случай exception, который ничего не имеет общего с низкоуровнеывми RE ошибками
+
+- иерархия исключений [cppreference](https://en.cppreference.com/w/cpp/error/exception)
+![alt text](img/34.png)
+
+обычно, logic_error - ошибка, в которой виноват пользователь. runtime_error - что-то пошло не так
+
+
+# [Лекция 27](../RAII/theory.md)
+более подробный текст по ссылке выше
+
+- причины, почему программы падают
+![alt text](img/35.png)
+
+## Exceptions handling
+```cpp
+struct A {
+    A() { std::cout << "A\n"; }
+    A(const A&) { std::cout << "copy\n"; }
+    ~A() { std::cout << "~A\n"; }
+}; 
+
+void f(int x) {
+    A a;
+    if (x == 0) {
+        throw a;
+    }
+}
+
+int main() {
+    try {
+        f(0);
+    } catch (...) {
+        std::cout << "caught!\n";
+    }
+}
+```
+объект скопируется в динамическую память (может быть в какую-то заранее выделенную статическую - это уже implementation defined) 
+```
+A
+copy
+~A
+caught!
+~A
+```
+
+если ловим по значению, будет ещё одно копирование - обратно на стек
+```cpp
+try {
+    f(0);
+} catch (A a) {
+    std::cout << "caught!\n";
+}
+```
+```
+A
+copy
+~A
+copy
+caught!
+~A
+~A
+```
+по ссылке копирования не будет
+
+- `bad_alloc`
+```cpp
+try{
+    new int[400'000'000'000];
+} catch (std::bad_alloc& ex) {
+    std::cout << &ex << '\n';
+}
+```
+под него резервируется память заранее в статической памяти (Emergency buffer)
+
+- `throw` внутри `catch`
+```cpp
+try {
+    f(0);
+} catch (A& a) {
+    throw a; // старый объект а уничтожится, создаётся новый
+}
+```
+но можно кинуть дальше (наверх!) тот же объект
+```cpp
+try {
+    f(0);
+} catch (A& a) {
+    throw;
+}
+```
+если делаем throw, дальнейшие catch того же уровня игнорируются, ловить будут только catch уровнем выше
+```cpp
+try {
+    try {
+        f(0);
+    } catch (A& a) {
+        std::cout << "caught!" << &a << '\n';
+        throw;
+    }
+} catch (A& a) {
+    std::cout << "caught again!" << &a << '\n'; // такой же адрес
+}
+```
+но если бы сделали `throw a;`, объект бы скопировался
+
+- если исключение не ловится, то компилятор не гарантирует, что вызовутся деструкторы\
+снова вставлю комментарий с прошлой лекции
+![alt text](img/36.png)
+
+- multiple catch
+
+для catch не применяются правила перегрузки, не делается выбор, какая конверсия лучше. ловится ровно тот тип, который мы указали
+
+2 исключения:
+1) можно навесить `const`
+2) можно ловить наследника по ссылке на родителя, или по значению (срезка)
+
+нет никакой перегрузки, выбирается первый подходящий catch
+
+```cpp
+struct Mom {};
+struct Son : Mom {};
+
+int main() {
+    try {
+        Son s;
+        throw s; // caught Mom
+    } catch (Mom) {
+        std::cout << "caught Mom";
+    } catch (Son) {
+        std::cout << "caught Son";
+    } catch (...) {
+        std::cout << "other";
+    }
+}
+```
+но если наследование приватное, то выведется `caught Son`, из main не можем использовать тот факт, что сын наследник мамы
+
+тут ещё бредовые примеры, про множественное наследование
+
+## RAII (Resource Acquisition Is Initialization)
+
+рассмотрим проблему при владении ресурсом и исключениях
+```cpp
+void g(int y) {
+    if (y == 0) {
+        throw 1;
+    }
+}
+
+void f(int x) {
+    int* p = new int(x);
+    g(*p);
+    delete p;
+}
+```
+
+для решения воспользуемся тем, что в языке есть деструкторы - сделаем обертку, которая будет освобождать память в деструкторе. тогда не важно каким образом мы выйдем из функции, delete всё равно будет вызван. такая обертка называется умным указателем
+
+его нельзя явно копировать, потому что появится проблема множественно владения ресурсом и double free
+
+можно явно запретить копирование - получим [std::unique_ptr](https://en.cppreference.com/w/cpp/memory/unique_ptr)
+```cpp
+template <typename T>
+struct unique_ptr {
+    T* p;
+    unique_ptr(T* p): p(p) {}
+    unique_ptr(const unique_ptr&) = delete;
+    unique_ptr& operator=(const unique_ptr&) = delete;
+    ~unique_ptr() { delete p; }
+    T& operator*() {
+        return *p;
+    }
+};
+```
+можно хранить счётчик ссылок - [std::shared_ptr](https://en.cppreference.com/w/cpp/memory/shared_ptr)
+
+## Исключения в конструкторах
+```cpp
+struct A {
+    A() { std::cout << "A"; }
+    ~A() { std::cout << "~A"; }
+};
+struct S {
+    A a;
+    S(int x) {
+        std::cout << "S";
+        if (x == 0) throw 1;
+    }
+    ~S() { std::cout << "~S"; }
+};
+
+int main() {
+    try {
+        S s(0);
+    } catch (...) {}
+}
+```
+вызовется деструктор A, т.к. оно уже успело создаться
+```
+AS~A
+```
+но вот так будет утечка памяти
+```cpp
+struct S {
+    A* a;
+    S(int x) : a(new A()) {
+        std::cout << "S";
+        if (x == 0) throw 1;
+    }
+    ~S() {
+        std::cout << "~S";
+        delete a;
+    }
+};
+```
+решение - RAII
+
+- исключение в списке инициализации
+```cpp
+struct A {
+    A(int x) {
+        std::cout << "A";
+        if (x == 0) throw 1;
+    }
+    ~A() {
+        std::cout << "~A";
+    }
+};
+
+struct S{
+    A a;
+    A aa;
+    A aaa;
+    S(int x) a(1), aa(0), aaa(2) {
+        std::cout << "S";
+    ~S(){
+        std::cout << "~S";
+    }
+};
+```
+вызовутся деструкторы всех тех полей, которые успели создаться уже к этому моменту, то есть а(1)
+
+-  Function try block [cppreference](https://en.cppreference.com/w/cpp/language/try)
+```cpp
+struct S {
+    A a;
+    A aa;
+    A aaa;
+    S(int x) try : a(1), aa(0), aaa(2) {
+        std::cout << "S";
+    } catch (...) {
+        std::cout << "caught!";
+    }
+    ~S(){
+        std::cout << "~S";
+    }
+};
+```
+но что будет с таким объектом?
+```cpp
+int main() {
+    S s(0);
+}
+```
+если мы написали такой function try block в конструкторе, то автоматически делается throw из него, поэтому в main прилетит исключение
+
+такое можно писать для любой функции
+```cpp
+void f() try {
+
+} catch (...) {
+
+}
+```
+
+## Исключения в деструкторах
+это зло!
+
+проблема в том, что деструктор сам по себе мог быть вызван по причине того, что было брошено исключение
+
+до C++11 нельзя бросать исключение из деструктора, если деструктор был вызван по причине летящего исключения. начиная с C++11 просто нельзя бросать исключение из деструктора (вызывается terminate)
+
+можно разрешить с помощью `noexcept(false)`
+```cpp
+~S() noexcept(false) {
+    std::cout << "~S";
+    throw 1;
+}
+```
+но, если деструктор вызван по причине того, что было брошено исключение, то всё равно произойдет terminate
+```cpp
+try {
+    S s(0);
+    throw 1; // terminate
+} catch(...) {}
+```
+как в деструкторе проверить, летит ли уже исключение?\
+[std::uncaught_exception](https://en.cppreference.com/w/cpp/error/uncaught_exception) (deprecated in C++17, removed in C++20)\
+[std::uncaught_exceptions](https://en.cppreference.com/w/cpp/error/uncaught_exception) (since C++17)
+
+возможна ситуация, когда одновременно летит несколько exceptions
+
+
+# Лекция 28
+## Exception safety
+есть 4 уровня безопасности относительно исключений ([cppreference](https://en.cppreference.com/w/cpp/language/exceptions)):
+
+1) Nothrow (or nofail) exception guarantee — the function never throws exceptions.
+2) Strong exception guarantee — If the function throws an exception, the state of the program is rolled back to the state just before the function call (for example, [std::vector::push_back](https://en.cppreference.com/w/cpp/container/vector/push_back)). (большинство фукнций стандартных контейнеров)
+3) Basic exception guarantee — If the function throws an exception, the program is in a valid state. No resources are leaked, and all objects' invariants are intact. 
+4) No exception guarantee — If the function throws an exception, the program may not be in a valid state: resource leaks, memory corruption, or other invariant-destroying errors may have occurred.
+
+Generic components may, in addition, offer exception-neutral guarantee: if an exception is thrown from a template parameter (e.g. from the Compare function object of std::sort or from the constructor of T in std::make_shared), it is propagated, unchanged, to the caller.
+
+- [Dynamic exception specification](https://en.cppreference.com/w/cpp/language/except_spec) (deprecated in C++11, removed in C++17)
+
+до C++11 можно было писать так
+```cpp
+void f() throw {}
+```
+но сейчас так делать не надо
+
+- [noexcept](https://en.cppreference.com/w/cpp/language/noexcept_spec) (C++11) - спецификатор
+
+помечает функцию, как не кидающей исключение
+```cpp
+void f() noexcept {
+
+}
+```
+если мы пишем noexcept, то мы обещаем, что мы не будем бросать исключения из своей функции, но можно делать так
+```cpp
+void f() noexcept try {
+
+} catch (...) {
+
+}
+```
+если из noexcept функции всё-таки брошено исключение, то произойдёт terminate
+
+можно делать условный noexcept
+```cpp
+template <typename T>
+void f() noexcept(std::is_reference_v<T>) {
+}
+```
+
+- [noexcept](https://en.cppreference.com/w/cpp/language/noexcept) - оператор
+
+в compile time проверяет, является ли данное выражение noexcept
+```cpp
+template <typename T>
+void g() {}
+
+int main(){
+    std::cout << noexcept(g<int>()); // 0
+}
+```
+для функций проверяет, помечена ли она noexcept, для стандартных операторов noexcept являются все, кроме new, dynamic_cast, typeid, throw
+
+так можно помечать функцию noexcept в зависимости от условия
+``` cpp
+template <typename T>
+void g() {}
+
+template <typename T>
+void f() noexcept(noexcept(g<T>())) {
+}
+```
+
+- смысл `noexcept`
+
+`operator[]` у вектора не noexcept, но он исключений не кидает
+
+на самом деле, noexcept помечаются функции, которые в принципе не могут пойти неудачно. когда мы пишем noexcept или когда видим noexcept, то мы должны понимать это так, что ничего плохого не может произойти от вызова этого метода.
+
+все деструкторы являются noexcept по умолчанию (С++11), этого слова явно не написано
+
+## Внутреннее устройство vector
+сейчас нас интересует только реализация `push_back`, остальные методы реализуются просто
+
+рассмотрим самую простую реализацию, используя только уже изученные инструменты (приближенно к C++03)
+
+- 1 проблема\
+нужно научиться делать аллокацию, но не создавая объектов, сколько мы хотим
+```cpp
+template <typename T>
+class vector {
+    T* arr_;
+    size_t sz_;
+    size_t cap_;
+
+public:
+    void reserve(size_t newcap) {
+        T* newarr = new T[newcap]; // вызываются конструкторы по умолчанию
+        //...
+    }
+
+    void push_back(const T& value) {
+        if (sz_ == cap_) {
+            reserve(cap_ > 0 ? cap_ * 2 : 1);
+        }
+        //...
+    }
+};
+```
+такой код не работает для объектов, у которых нет конструктора по умолчанию
+```cpp
+struct S {
+    int x;
+    S(int x) : x(x) {}
+};
+```
+с нашим уровнем знаний нельзя написать ничего лучше
+```cpp
+T* newarr = reinterpret_cast<T*>(new char[newcap * sizeof(T)]);
+```
+
+- 2 проблема\
+нужно скопировать объекты их старой памяти в новую. мы пытаемся сделать присваивание сырым байтам, под `newarr[index]` ещё нет никакого объекта
+```cpp
+void reserve(size_t newcap) {
+    T* newarr = reinterpret_cast<T*>(new char[newcap * sizeof(T)]);
+    for (size_t index = 0; index < sz_; ++index) {
+        newarr[index] = arr_[index]; // UB
+    }
+    //...
+}
+```
+решение с `memcpy` не будет работать, если одно из полей объекта является указателем или ссылкой на другое его поле
+```cpp
+struct Strange {
+    int x;
+    int& r;
+    Strange(int y) : x(y), r(x) {}
+};
+```
+но такие объекты должны переживать реаллокацию\
+спойлер: std::string является таким типом 
+
+нужно по данному адресу вызвать конструктор данного типа (на сырой памяти)\
+решение: оператор `placement new` [cppreference](https://en.cppreference.com/w/cpp/language/new)
+
+```cpp
+new(newarr + index) T(arr_[index]);
+```
+
+- 3 проблема\
+как вызвать деструкторы для объектов в старой памяти
+```cpp
+void reserve(size_t newcap) {
+    T* newarr = reinterpret_cast<T*>(new char[newcap * sizeof(T)]);
+    for (size_t index = 0; index < sz_; ++index) {
+        new(newarr + index) T(arr_[index]);
+    }
+
+    delete[] arr_; // удаляем массив char из newcap * sizeof(T) элементов
+    //...
+}
+```
+нужно руками вызвать деструкторы, и не только по этому. reserve можно вызывать не обязательно, когда sz == cap. можно сделать reserve, даже если массив не заполнен целиком. в этом случае нужно вызвать именно столько деструкторов, сколько было объектов
+
+```cpp
+for (size_t index = 0; index < sz_; ++index) {
+    (arr_ + index)->~T();
+}
+delete[] reinterpret_cast<char*>(arr_);
+```
+
+по моему, можно сделать и так
+```cpp
+arr_[index].~T();
+```
+
+- 3 проблема - exception safety\
+хотим безопасный относительно исключений reserve
+```cpp
+void reserve(size_t newcap) {
+    if (newcap < cap_) {
+        return;
+    }
+
+    T* newarr = reinterpret_cast<T*>(new char[newcap * sizeof(T)]);
+    for (size_t index = 0; index < sz_; ++index) {
+        new(newarr + index) T(arr_[index]);
+    }
+
+    for (size_t index = 0; index < sz_; ++index) {
+        (arr_ + index)->~T();
+    }
+    delete[] reinterpret_cast<char*>(arr_);
+    
+    arr_ = newarr;
+    cap_ = newcap;
+}
+```
+1) если `new` кинет исключение, мы к этому моменту ещё ничего не испортили. так наверх и вылетим с исключением `std::bad_alloc`
+2) `placement new` сам по себе не кидает исключение, но T может кинуть исключение в конструкторе. нужно удалить всё то, что мы успели скопировать
+3) считаем, что деструкторы не кидают исключений
+4) `delete` тоже не кидает исключений
+```cpp
+void reserve(size_t newcap) {
+    if (newcap < cap_) {
+        return;
+    }
+
+    T* newarr = reinterpret_cast<T*>(new char[newcap * sizeof(T)]);
+    size_t index = 0;
+    try {
+        for (; index < sz_; ++index) {
+            new(newarr + index) T(arr_[index]);
+        }
+    } catch (...) {
+        for (size_t oldindex = 0; oldindex < index; ++oldindex) {
+            (newarr + oldindex)->~T();
+        }
+        delete[] reinterpret_cast<char*>(newarr);
+        throw;
+    }
+
+    for (size_t index = 0; index < sz_; ++index) {
+        (arr_ + index)->~T();
+    }
+    delete[] reinterpret_cast<char*>(arr_);
+    
+    arr_ = newarr;
+    cap_ = newcap;
+}
+```
+но ведь мы писали push_back
+```cpp
+void push_back(const T& value) {
+    if (sz_ == cap_) {
+        reserve(cap_ > 0 ? cap_ * 2 : 1);
+    }
+    new(arr_ + sz_) T(value);
+    ++sz_;
+}
+```
+5) пытаемся положить на новое место новый элемент. а вдруг он кинет исключение. тогда надо всё вернуть как было.
+
+вывод: выражать push_back через reserve - плохая идея. нужно в том же блоке try пытаться положить новый элемент
+
+## `vector<bool>`
+there is one impostor among us
+
+operator[] возвращает не ссылку, а новый временный объект bit_reference. и ему можно присваивать
+
+```cpp
+std::vector<bool> v(10);
+v[5] = true;
+```
+
+!пример ситуации, когда rvalue можно и нужно что-то присваивать
+
+```cpp
+template <>
+class vector<bool> {
+    char* arr_ = nullptr;
+    size_t sz_ = 0;
+    size_t cap_ = 0;
+
+    struct BitReference {
+        char* cell;
+        uint8_t index;
+
+        BitReference(char* cell, uint8_t index)
+            : cell(cell), index(index) {}
+
+        BitReference operator=(bool b) {
+            if (b) {
+                *cell |= (1 << index);
+            } else {
+                *cell &= ~(1 << index);
+            }
+            return *this;
+        }
+
+        operator bool() const {
+            return *cell & (1 << index);
+        }
+    };
+public:
+    BitReference operator[](size_t index) {
+        return BitReference(arr_ + index / 8, index % 8);
+    }
+};
+```
+[полный код с лекции](./code/lec28/vector.cpp)
+
+
+# Лекция 29
+опять немного про вектор
+
+- инвалидация указателей/ссылок - UB\
+![alt text](img/37.png)
+![alt text](img/38.png)
+
+## Внутреннее устройство deque
+важное отличие `deque` от `vector` - он такими свойствами не обладает. это главное, почему он используется под капотом в `stack`, `queue`, `priority_queue`
+
+как реализовать такой контейнер?
+
+- храним внешний массив указателей на T - buckets
+![alt text](img/39.png)
+
+- когда первый или последний слой заполнены, реаллоцируем внешний массив
+![alt text](img/40.png)
+
+- внутренние массивы так же являются сырыми байтами, кладем элементы через `placement new`
+
+- `operator[]` работает за `O(1)`, т.к. размер бакетов константный - это можно легко пересчитывать
+
+- у дека нет `reserve`, `shrink_to_fit`
+
+- [std::stack](https://en.cppreference.com/w/cpp/container/stack),
+[std::queue](https://en.cppreference.com/w/cpp/container/queue), [std::priority_queue](https://en.cppreference.com/w/cpp/container/priority_queue) по умолчанию работают над деком
+
+- почему в стеке `pop()` возвращает void а не T?\
+чтобы возвращать T, его всегда нужно было бы куда-то скопировать
+
+## [Итераторы](../iterators/theory.md)
+более подробный текст по ссылке выше
+
+не во всех контейнерах можно обращаться по индексу\
+[итератор](https://en.cppreference.com/w/cpp/iterator) - тип, который позволяет делать обход последовательности (обобщение указателя). его также можно разыменовывать и инкрементировать
+
+- типы итераторов
+1) Input Iterator\
+    `!=`, `->`
+2) Forward Iterator\
+    будем видеть одно и то же при проходах
+3) Bidirectional Iterator\
+    `--`
+4) Random Access Iterator\
+    `+=n`, `-=n`, `it1-it2`, `<`, `>`, `<=`, `>=`
+5) Contiguous Iterator (C++17)\
+    сплошной кусок памяти
+
+есть ещё [output_iterator](https://en.cppreference.com/w/cpp/iterator/output_iterator) - в него можно писать, обсудим отдельно
+
+![alt text](img/41.png)
+
+- [range-based for](https://en.cppreference.com/w/cpp/language/range-for)
+```cpp
+std::set<int> s;
+for (int x : s) {
+    // x
+}
+```
+означает
+```cpp
+for (std::set<int>::iterator it = s.begin(); it != s.end(); ++it) {
+    // *it
+}
+```
+на самом деле не совсем так, он запоминает изначальные being и end перед циклом
+
+- [cppinsights.io](https://cppinsights.io/) - сайт, который удаляет весь синтаксический сахар
+
+вот на самом деле, во что развернётся for из примера выше
+```cpp
+#include <set>
+
+int main()
+{
+  std::set<int, std::less<int>, std::allocator<int> > s = std::set<int, std::less<int>, std::allocator<int> >();
+  {
+    std::set<int, std::less<int>, std::allocator<int> > & __range1 = s;
+    std::_Rb_tree_const_iterator<int> __begin1 = __range1.begin();
+    std::_Rb_tree_const_iterator<int> __end1 = __range1.end();
+    for(; operator!=(__begin1, __end1); __begin1.operator++()) {
+      int x = __begin1.operator*();
+    }
+    
+  }
+  return 0;
+}
+```
+
+- [Named Requirements](https://en.cppreference.com/w/cpp/named_req) - некоторые свойства типов, которые формально описаны. в том числе, контейнеры и итераторы
+
+- [Algorithms library](https://en.cppreference.com/w/cpp/algorithm) - алгоритмы стандартной библиотеки, работают с итераторами. название шаблонного параметра подсказывает нам, какой тип итератора нужен\
+    - [std::sort](https://en.cppreference.com/w/cpp/algorithm/sort) требует Random Access Iterator
+    - [std::next_permutation](https://en.cppreference.com/w/cpp/algorithm/next_permutation) требует Bidirectional Iterator
+    - [std::lower_bound](https://en.cppreference.com/w/cpp/algorithm/lower_bound) нужен Forward Iterator. на самом деле бинпоиск работает логарифмическое время относительно операций над T (логарифмическое кол-во сравнений), сдвиги итератора не учитываются. для больших объектов (например, строки) может быть осмысленно сделать бинпоиск на связном списке, сэкономив кол-во вызовов операций сравнения. но для Random Access Iterator, оно будет делать `+=`
+
+- как по итератору, понять его вид?
+
+с C++11 есть `auto`, но это не всегда корректно
+```cpp
+template <typename InputIterator>
+void find_most_often_number(InputIterator begin, InputIterator end) {
+    auto x = *begin;
+    // ...
+}
+```
+например, для `vector<bool>` это bit_reference
+
+есть набор метафункций для итераторов - [std::iterator_traits](https://en.cppreference.com/w/cpp/iterator/iterator_traits)
+
+можно узнать тип
+```cpp
+template <typename InputIterator>
+void find_most_often_number(InputIterator begin, InputIterator end) {
+    typename std::iterator_traits<InputIterator>::value_type x = *begin;
+}
+
+int main() {
+    std::vector<bool> vb(10);
+    find_most_often_number(vb.begin(), vb.end());
+}
+```
+
+также можно узнать, какая категория итератора [iterator_category](https://en.cppreference.com/w/cpp/iterator/iterator_tags) - пустые структуры (теги). они сделаны с наследованием для удобства проверки на равентсво категорий итератора
+
+
+# Лекция 30
+- [std::distance](https://en.cppreference.com/w/cpp/iterator/distance) - количество шагов от first до last\
+если Random Access Iterator, то она работает за константное время, иначе за линейное
+
+[std::is_base_of](https://en.cppreference.com/w/cpp/types/is_base_of) - является ли родителем
+
+```cpp
+template <typename Iterator>
+typename std::iterator_traits<Iterator>::difference_type
+distance(Iterator first, Iterator last) {
+    if constexpr (std::is_base_of_v<
+        std::random_access_iterator_tag,
+        typename std::iterator_traits<Iterator>::iterator_category
+    >) {
+        return last - first;
+    } else {
+        int i = 0;
+        for (; first != last; ++first) {
+            ++i;
+        }
+        return i;
+    }
+}
+
+int main() {
+    std::vector<bool> vb(10);
+    std::cout << ::distance(vb.begin(), vb.end());
+}
+```
+можно без `if constexpr` средставми старого C++, но более костыльно - через перегрузку функций
+
+- [std::advance](https://en.cppreference.com/w/cpp/iterator/advance) - двигает итератор на n шагов
+
+- [std::prev](https://en.cppreference.com/w/cpp/iterator/prev), [std::next](https://en.cppreference.com/w/cpp/iterator/next) - двигает назад или вперёд на n шагов и возвращает итератор
+
+## Реализация итераторов
+будем дописывать [код вектора](./code/lec28/vector.cpp)
+ с 28 лекции
+```cpp
+class iterator {
+    T* ptr;
+
+    iterator(T* ptr) : ptr(ptr) {}
+public:
+    iterator(const iterator&) = default;
+    iterator& operator=(const iterator&) = default;
+
+    T& operator*() const { return *ptr; }
+    T* operator->() const { return ptr; } // вот такой костыль языка
+
+    iterator& operator++() {
+        ++ptr;
+        return *this;
+    }
+    iterator& operator++(int) {
+        iterator copy = *this;
+        ++ptr;
+        return copy;
+    }
+};
+```
+здесь под const iterator - подразумевается аналог константного указателя (поэтому `operator*` и `operator->` помечены const, но возвращают обычную ссылку! на T)
+
+- const_iterator - аналог указателя на const\
+он уже возвращает const ссылку на T
+```cpp
+class const_iterator {
+    const T* ptr;
+
+    const_iterator(T* ptr) : ptr(ptr) {}
+public:
+    const_iterator(const const_iterator&) = default;
+    const_iterator& operator=(const const_iterator&) = default;
+
+    const T& operator*() const { return *ptr; }
+    const T* operator->() const { return ptr; }
+
+    const_iterator& operator++() {
+        ++ptr;
+        return *this;
+    }
+    const_iterator& operator++(int) {
+        const_iterator copy = *this;
+        ++ptr;
+        return copy;
+    }
+};
+```
+но как не копипастить это 2 раза?
+```cpp
+template <bool IsConst>
+class base_iterator {
+public:
+    using pointer_type = std::conditional_t<IsConst, const T*, T*>;
+    using reference_type = std::conditional_t<IsConst, const T&, T&>;
+    using value_type = T;
+
+private:
+    pointer_type ptr;
+    base_iterator(T* ptr) : ptr(ptr) {}
+
+    friend class vector<T>;
+public:
+    base_iterator(const base_iterator&) = default;
+    base_iterator& operator=(const base_iterator&) = default;
+
+    reference_type operator*() const { return *ptr; }
+    pointer_type operator->() const { return ptr; }
+
+    base_iterator& operator++() {
+        ++ptr;
+        return *this;
+    }
+    base_iterator& operator++(int) {
+        base_iterator copy = *this;
+        ++ptr;
+        return copy;
+    }
+
+    operator base_iterator<true>() const {
+        return {ptr};
+    }
+};
+```
+последний итератор разрешает неявно кастоваться от неконстантного итератора к константному
+
+затем в публичной части
+```cpp
+using iterator = base_iterator<false>;
+using const_iterator = base_iterator<true>;
+
+iterator begin() { return {arr_}; }
+iterator end() { return {arr_ + sz_}; }
+
+const_iterator begin() const { return {arr_}; }
+const_iterator end() const { return {arr_ + sz_}; }
+```
+но есть ещё `cbegin`, `cend` - одинаковый для константного и неконстантного контейнера
+
+```cpp
+const_iterator cbegin() const { return {arr_}; }
+const_iterator cend() const { return {arr_ + sz_}; }
+```
+
+- [std::reverse_iterator](https://en.cppreference.com/w/cpp/iterator/reverse_iterator) - отдельный класс в стандартной библиотеке
+
+это адаптер над итератором, он хранит в себе итератор и разворачивает все действия в обратную сторону
+
+![alt text](img/42.png)
+
+т.е. `++` это `--` и наоборот, `*` или `->` это `current - 1`
+
+так же раньше был [std::iterator](https://en.cppreference.com/w/cpp/iterator/iterator) (deprecated in C++17) - это другое, им не надо пользоваться (итераторы, это внутренние типы контейнеров!)
+
+поэтому напишем
+```cpp
+using reverse_iterator = std::reverse_iterator<iterator>;
+using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+```
+`rbegin`, `rend`, `crbegin`, `crend` добавятся сами
+
+- инвалидация итераторов\
+аналогично - UB
+```cpp
+std::vector<int> v(10);
+std::vector<int>::iterator x = v.begin() + 5;
+v.push_back(1);
+std::cout << *x;
+```
+соответственно это тоже UB
+```cpp
+std::vector<int> v = {1, 2, 3, 4, 5};
+for (int& x : v) {
+    v.push_back(x);
+}
+```
+даже не смотря на то, что `begin` и `end` запоминаются заранее, вектор может сделать реаллокацию в теле цикла, и старые итераторы инвалидируются
+
+- fun fact
+
+[одно из свойств итератора вектора](https://en.cppreference.com/w/cpp/container/vector/swap), что мы должны уметь свапать векторы, но при этом чтобы итераторы сохранялись валидными
+
+в деке указатели и ссылки не инвалидируются, но итераторы инвалидируются (нужно хранить указатель на элемент внешнего массива, но внешний массив может реаллоцироваться при `push_back`)
+
+[итоговый код vector](./code/lec30/vector.cpp)
+
+## Output iterator
+```cpp
+int a[10] = {1, 2, 3, 4, 5};
+std::vector<int> v(5);
+std::copy(a, a + 10, v.begin()); // UB
+```
+`copy` разыменовывает, присваивает и инкрементирует. он ничего не знает про то, что лежит под итератором
+
+- `output iterator` гарантирует, что можно его разыменовывать, инкрементировать и присваивать сколько угодно раз
+
+- [std::back_insert_iterator](https://en.cppreference.com/w/cpp/iterator/back_insert_iterator) - output итератор, который докладывает элементы в контейнер, для которого он сконструирован
+
+```cpp
+int a[10] = {1, 2, 3, 4, 5};
+std::vector<int> v;
+std::copy(a, a + 5, std::back_insert_iterator<std::vector<int>>(v));
+for (int x : v) {
+    std::cout << x << " "; // 1 2 3 4 5
+}
+```
+как его реализовать?
+```cpp
+template <typename Container>
+class back_insert_iterator {
+    Container& container;
+public:
+    back_insert_iterator(Container& container) : container(container) {}
+
+    back_insert_iterator& operator=(const typename Container::value_type& value) {
+        container.push_back(value);
+        return *this;
+    }
+    back_insert_iterator& operator++() { return *this; }
+    back_insert_iterator operator++(int) { return *this; }
+    back_insert_iterator& operator*() { return *this; }
+};
+```
+
+также есть функция [std::back_inserter](https://en.cppreference.com/w/cpp/iterator/back_inserter), которая просто создаёт такой итератор, без указания шаблонного параметра
+```cpp
+template<class Container>
+std::back_insert_iterator<Container> back_inserter(Container& c)
+{
+    return std::back_insert_iterator<Container>(c);
+}
+```
+```cpp
+std::copy(a, a + 5, std::back_inserter(v));
+```
+
+также есть [std::front_inserter](https://en.cppreference.com/w/cpp/iterator/front_inserter) и [std::inserter](https://en.cppreference.com/w/cpp/iterator/inserter)
+
+[std::insert_iterator](https://en.cppreference.com/w/cpp/iterator/insert_iterator) принимает контейнер и итератор в контейнере, вызывает insert в этом контейнере, по данному итератору
 
