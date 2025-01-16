@@ -3899,8 +3899,1732 @@ std::back_insert_iterator<Container> back_inserter(Container& c)
 ```cpp
 std::copy(a, a + 5, std::back_inserter(v));
 ```
-
 также есть [std::front_inserter](https://en.cppreference.com/w/cpp/iterator/front_inserter) и [std::inserter](https://en.cppreference.com/w/cpp/iterator/inserter)
 
 [std::insert_iterator](https://en.cppreference.com/w/cpp/iterator/insert_iterator) принимает контейнер и итератор в контейнере, вызывает insert в этом контейнере, по данному итератору
 
+
+# Лекция 31-34
+TODO
+
+
+# Лекция 35
+## Аллокаторы
+идея: пусть у нас есть `list` на миллион интов. на каждый `insert` вызывается оператор `new`. так же с `map`, `set`, `unordered_set`. очевидно, что это работает медленно
+
+почему бы, например, не завести этот `list` на стеке, если он туда спокойно поместится?
+
+аллокатор - прослойка между контейнером и оператором `new`
+
+`Container -> Allocator -> operator new -> malloc -> OS`\
+алгоритм, который реализован в функции malloc, тоже иногда называется аллокатором. и его тоже можно заменить (аллокаторы уровня C). но мы рассматриваем аллокаторы уровня C++
+
+- [std::allocator](https://en.cppreference.com/w/cpp/memory/allocator)
+
+наивная реализация
+```cpp
+template <typename T>
+struct allocator {
+    T* allocate(size_t count) {
+        return reinterpret_cast<T*>(new char[count * sizeof(T)]);
+    }
+
+    void deallocate(T* ptr, size_t) {
+        delete[] reinterpret_cast<char*>(ptr);
+    }
+
+    template <typename U, typename... Args>
+    void construct(U* ptr, const Args&... args) {
+        new (ptr) U(args...);
+    }
+
+    template <typename U>
+    void destroy(U* ptr) {
+        ptr->~U();
+    }
+    // объяснение насчет шаблонного U будет позже
+};
+```
+это не совсем правда, в дальейшем мы будем её улучшать
+
+- теперь исправим [код вектора](./code/lec30/vector.cpp) с 30 лекции
+
+теперь вектор принимает аллокатор вторым шаблонным параметром
+```cpp
+template <typename T, typename Alloc = std::allocator<T>>
+class vector {
+    T* arr_ = nullptr;
+    size_t sz_ = 0;
+    size_t cap_ = 0;
+    Alloc alloc_;
+    // ...
+};
+```
+вот как поменяется метод `reserve`
+```cpp
+void reserve(size_t newcap) {
+    if (newcap < cap_) {
+        return;
+    }
+
+    // T* newarr = reinterpret_cast<T*>(new char[newcap * sizeof(T)]);
+    T* newarr = alloc_.allocate(newcap);
+    size_t index = 0;
+    try {
+        for (; index < sz_; ++index) {
+            // new(newarr + index) T(arr_[index]);
+            alloc_.construct(newarr + index, arr_[index]);
+        }
+    } catch (...) {
+        for (size_t oldindex = 0; oldindex < index; ++oldindex) {
+            // (newarr + oldindex)->~T();
+            alloc_.destroy(newarr + oldindex);
+        }
+        // delete[] reinterpret_cast<char*>(newarr);
+        alloc_.deallocate(newarr, newcap);
+        throw;
+    }
+
+    for (size_t index = 0; index < sz_; ++index) {
+        // (arr_ + index)->~T();
+        alloc_.destroy(arr_ + index);
+    }
+    // delete[] reinterpret_cast<char*>(arr_);
+    alloc_.deallocate(arr_, cap_);
+    
+    arr_ = newarr;
+    cap_ = newcap;
+}
+```
+- конструкторы стандартных контейнеров обычно принимают аллокатор
+
+- дефолтный конструктор вектора помечен `noexcept(noexcept(Allocator()))`
+
+- стандартные аллокаторы равны
+
+- у контейнеров есть метод `get_allocator` - возвращает копию текущего аллокатора (аллокатор - всегда маленький объект)
+
+- примеры нестандартных аллокаторов
+    1) PoolAllocator - изначально выделаем массив и выдаём кусочки
+    2) StackAllocator - выделаяет всё на стеке, в констукторе принимаем массив, например как-то так:
+        ```cpp
+        std::array<char, 1000000> arr;
+        StackAllocator alloc(arr);
+        std::list<int, StackAllocator<int>> lst;
+        ```
+    3) FreeListAllocator - изначально выделяем объекты как обычно. а когда освобождаем, сохраняем их в свой список свободных кусков памяти, и в следующие разы бёрем оттуда
+
+## Проблемы
+- не всем контейнерам нужно аллоцировать тот тип `T`, от которого был создан аллокатор. например `list` и `map` должны аллоцировать некий `Node`, но пользователь про него ничего не знает, это приватный тип
+
+начнем релизовывать list
+
+```cpp
+template <typename T, typename Alloc = std::allocator<T>>
+class list {
+    struct BaseNode {
+        BaseNode* prev;
+        BaseNode* next;
+    };
+
+    struct Node {
+        T value;
+    };
+
+    BaseNode fakeNode;
+    size_t count;
+    Alloc/*???*/ alloc;
+};
+```
+хотим иметь аллокатор на `Node`, но мы не можем его объявить, мы даже не можем назвать его тип
+
+- костыль такой:\
+в аллокаторе есть метафункция (структура), которая позволяет получить такой же аллокатор, но другого `T` - `rebind`
+
+в [std::allocator](https://en.cppreference.com/w/cpp/memory/allocator) она (deprecated in C++17, removed in C++20)
+
+```cpp
+template <typename U>
+struct rebind {
+    using other = allocator<U>;
+};
+```
+теперь можем использовать этот тип
+```cpp
+template <typename T, typename Alloc = std::allocator<T>>
+class list {
+    struct BaseNode {
+        BaseNode* prev;
+        BaseNode* next;
+    };
+
+    struct Node {
+        T value;
+    };
+
+    BaseNode fakeNode;
+    size_t count;
+    typename Alloc::rebind<Node>::other alloc;
+};
+```
+clang подсказывает исправить dependent template name, хотя g++ компилирует
+```cpp
+typename Alloc::template rebind<Node>::other alloc;
+```
+
+- теперь как инициализировать этот аллокатор?
+```cpp
+list(const Alloc& alloc) : fakeNode{}, count(), alloc(/*???*/)
+```
+надо добавить в аллокатор конструктор от аллокатора того же типа, с другим любым шаблонным параметром
+```cpp
+template <typename U>
+allocator(allocator<U>) {}
+```
+теперь можно спокойно написать
+```cpp
+list(const Alloc& alloc) : fakeNode{}, count(), alloc(alloc) {}
+```
+
+- теперь понятно, почему изначально `construct` принимал произвольный тип `U` в качестве шаблонного\
+пример - когда мы аллоцировали `Node`, но надо вызвать `construct` для типа `T`. аналогично с `destroy`
+
+- почему аллокатор не может быть шаблонным шаблонным параметром?
+```cpp
+template <typename T, template<typename> Alloc = std::allocator>
+class list {
+    //...
+    Alloc<Node> alloc;
+    //...
+};
+```
+ответ: у аллокатора могут быть другие шаблонные параметры, не факт что он всегда один, и не факт, что это всегда будут типы\
+например
+```cpp
+std::array<char, 1000000> arr;
+StackAllocator<int, 1000000> alloc(arr);
+```
+
+- аллокатор не влияет на размер контейнера
+сейчас sizeof нашего вектора 32, но можно сделать empty base optimization - наследуемся от аллокатора
+
+```cpp
+class vector : private Alloc {
+    T* arr_ = nullptr;
+    size_t sz_ = 0;
+    size_t cap_ = 0;
+    //...
+};
+```
+теперь sizeof равен 24
+
+## Stateful аллокаторы
+- копирование аллокаторов\
+рассмотрим PoolAllocator, который хранит большой массив в динамической памяти.
+
+при копировании мы хотим, чтобы новый аллокатор ссылался на тот же массив, но не копировал его
+
+возникает проблема общего владения памятью. одно из решений - `shared_ptr`
+
+можно сделать отдельный класс pool, в котором заниматься обработкой этого массива и сам pool вообще запретить копировать, а аллокатору хранить указатель на этот pool
+
+## [allocator_traits](https://en.cppreference.com/w/cpp/memory/allocator_traits)
+у разных аллокаторов многие методы выглядят одинаково
+
+было бы удобно иметь структуру, которая бы предопределяла некоторые функции и некоторые using-и
+
+`allocator_traits` за нас определяет функцию `construct`, `destroy`, структуру `rebind`, если у нас их нет
+
+эти методы статические, сам объект `allocator_traits` мы никогда не создаём
+
+мы пока не умеем такое писать
+```cpp
+template <typename Alloc>
+struct allocator_traits {
+    template <typename U, typename... Args>
+    static void construct(Alloc& alloc, U* ptr, const Args&... args) {
+        if constexpr (/* Alloc has method construct */) {
+            alloc.construct(ptr, args...);
+        } else {
+            new (ptr) U(args...);
+        }
+    }
+};
+```
+аналогично для `destroy` и `rebind` (здесь это будет называться `rebind_alloc`)
+
+также есть `allocate` и `deallocate` - просто для симметрии. поэтому контейнеры на самом деле, обращаются к `allocator_traits`, а не к аллокатору напрямую
+
+поэтому наша исходная схема выглядит так:\
+`Container -> allocator_traits -> Allocator -> operator new -> malloc -> OS`
+
+[итоговый код allocator](./code/lec35/allocator.cpp)\
+[итоговый код vector](./code/lec35/vector_ebo.cpp) (сделал сразу с ebo)\
+[итоговый код list](./code/lec35/list.cpp)
+
+
+# Лекция 36
+перепишем код вектора с использованием allocator_traits
+```cpp
+void reserve(size_t newcap) {
+    if (newcap < cap_) {
+        return;
+    }
+
+    T* newarr = AllocTraits::allocate(alloc_, newcap);
+    size_t index = 0;
+    try {
+        for (; index < sz_; ++index) {
+            AllocTraits::construct(alloc_, newarr + index, arr_[index]);
+        }
+    } catch (...) {
+        for (size_t oldindex = 0; oldindex < index; ++oldindex) {
+            AllocTraits::destroy(alloc_, newarr + oldindex);
+        }
+        AllocTraits::deallocate(alloc_, newarr, newcap);
+        throw;
+    }
+
+    for (size_t index = 0; index < sz_; ++index) {
+        AllocTraits::destroy(alloc_, arr_ + index);
+    }
+    AllocTraits::deallocate(alloc_, arr_, cap_);
+    
+    arr_ = newarr;
+    cap_ = newcap;
+}
+```
+
+## [Allocator-aware контейнеры](https://en.cppreference.com/w/cpp/named_req/AllocatorAwareContainer) (C++11)
+когда контейнер копируется, должен ли он копировать аллокатор?
+
+иногда нам бы хотелось, чтобы контейнер копировал аллокатор, а иногда, чтобы он создавал новый
+
+- контейнер при копировании, спрашивает у аллокатора, что с ним делать. у аллокатора есть опциональный метод `select_on_container_copy_construction` - возвращает аллокатор по значению, если его нет `allocator_traits` доопределит его за нас
+
+- аналогично для присваивания - `propagate_on_container_copy_assignment`, только это метафункция (true или false в compile time)
+
+- реализация оператора присваивания для вектора\
+пока наивная реализация, без присваивания аллокатора
+```cpp
+vector& operator=(const vector& other) {
+    if (this == &other) {
+        return *this;
+    }
+
+    T* newarr = AllocTraits::allocate(alloc_, other.cap_);
+    size_t i = 0;
+    try {
+        for (; i < other.sz_; ++i) {
+            AllocTraits::construct(alloc_, newarr + i, other[i]);
+        }
+    } catch(...) {
+        for (size_t j = 0; j < i; ++j) {
+            AllocTraits::destroy(alloc_, newarr + j);
+        }
+        AllocTraits::deallocate(alloc_, newarr, other.cap_);
+        throw;
+    }
+
+    for (size_t i = 0; i < sz_; ++i) {
+        AllocTraits::destroy(alloc_, arr_ + i);
+    }
+    AllocTraits::deallocate(alloc_, arr_, cap_);
+
+    arr_ = newarr;
+    sz_ = other.sz_;
+    cap_ = other.cap_;
+    return *this;
+}
+```
+сейчас аллокатор намертво привязан к контейнеру. но хотим учитывать возможность забрать себе аллокатор
+
+проблема - старые объекты нужно удалять старым аллокатором, а новые создавать новым. но при этом всё еще старые объекты нужно удалить позже, чтобы не нарушать exception safety
+```cpp
+vector& operator=(const vector& other) {
+    if (this == &other) {
+        return *this;
+    }
+    Alloc newalloc = AllocTraits::propagate_on_container_copy_assignment::value
+        ? other.alloc_ : alloc_;
+
+    T* newarr = AllocTraits::allocate(newalloc, other.cap_);
+    size_t i = 0;
+    try {
+        for (; i < other.sz_; ++i) {
+            AllocTraits::construct(newalloc, newarr + i, other[i]);
+        }
+    } catch(...) {
+        for (size_t j = 0; j < i; ++j) {
+            AllocTraits::destroy(newalloc, newarr + j);
+        }
+        AllocTraits::deallocate(newalloc, newarr, other.cap_);
+        throw;
+    }
+
+    for (size_t i = 0; i < sz_; ++i) {
+        AllocTraits::destroy(alloc_, arr_ + i);
+    }
+    AllocTraits::deallocate(alloc_, arr_, cap_);
+
+    arr_ = newarr;
+    sz_ = other.sz_;
+    cap_ = other.cap_;
+    alloc_ = newalloc;
+    return *this;
+}
+```
+оператор присваивания аллокатора не должен кидать исключение - требование аллокатора (однако такого на cppreference не нашлось)
+
+на самом деле, если новый аллокатор равен старому, то нет смысла присваивать новый аллокатор и выделять новую память. надо посмотреть, не хватает ли нам нашей текущей памяти (дописывать не стали)
+
+- еще в аллокаторах есть метафункция `is_always_equal` - в compile time проверяем, правда ли что все аллокаторы такого типа равны\
+(C++11, deprecated in C++23, removed in C++26)
+
+## Перегрузка new и delete
+можно глобально подменить операторы `new` и `delete`. это более низкоуровневая вещь, чем переопределение аллокаторов
+
+- оператор `new` состоит из 2 частей:
+    1) выделение памяти - фунция `operator new`
+    2) вызов конструктора на выделенной памяти - `placement new`
+
+на самом деле оператор `new` и функция `operator new` это 2 разных вещи. перегрузить можно только функцию `operator new`!!!
+
+с `delete` всё наоборот
+
+```cpp
+void* operator new(size_t n) {
+    std::cout << n << " bytes allocated\n";
+    return malloc(n);
+}
+
+void operator delete(void* ptr) {
+    free(ptr);
+}
+
+int main() {
+    std::vector<int> v;
+    for (int i = 0; i < 50; ++i) {
+        v.push_back(i);
+    }
+}
+```
+```
+4 bytes allocated
+8 bytes allocated
+16 bytes allocated
+32 bytes allocated
+64 bytes allocated
+128 bytes allocated
+256 bytes allocate
+```
+- аналогично можно сделать для `new[]` и `delete[]`
+```cpp
+void* operator new[](size_t n) {
+    std::cout << n << "[] bytes allocated\n";
+    return malloc(n);
+}
+
+void operator delete[](void* ptr) {
+    free(ptr);
+}
+
+int main() {
+    int* ptr = new int[100]; // 400[] bytes allocated
+    delete[] ptr;
+}
+```
+заметим, что в функцию пришел именно размер в байтах
+
+но изначально `new[]` вызывает в себе `new`. поэтому, если его не определить, будет вот так
+```cpp
+void* operator new(size_t n) {
+    std::cout << n << " bytes allocated\n";
+    return malloc(n);
+}
+
+void operator delete(void* ptr) {
+    free(ptr);
+}
+
+int main() {
+    int* ptr = new int[100]; // 400 bytes allocated
+    delete[] ptr;
+}
+```
+
+- исправим код аллокатора
+
+можно вызывать не оператор `new`, в функцию `operator new`
+```cpp
+T* allocate(size_t count) {
+    // return reinterpret_cast<T*>(new char[count * sizeof(T)]);
+    return operator new(count * sizeof(T));
+}
+
+void deallocate(T* ptr, size_t) {
+    // delete[] reinterpret_cast<char*>(ptr);
+    operator delete(ptr);
+}
+```
+эта функция `operator new` отрабатывает, как первая половина оператора `new`
+
+- как оператор `delete[]` понимает, сколько вызвать деструкторов? 
+```cpp
+void* operator new(size_t n) {
+    std::cout << n << " bytes allocated\n";
+    return malloc(n);
+}
+
+void operator delete(void* ptr) {
+    free(ptr);
+}
+
+int main() {
+    std::cout << sizeof(std::string) << "\n";
+    std::string* ps = new std::string[10];
+    delete[] ps;
+}
+```
+почему выделилось больше байт?
+```cpp
+32
+328 bytes allocated
+```
+когда мы выделяем нетривиальные типы, оператору `new[]` нужно записать, сколько штук их было, чтобы `delete[]` знал, сколько деструкторов вызвать
+
+поэтому `operator delete[]` неявно за нас делает сдвиг на 8 байт
+
+не нужно руками вызывать деструктор 
+
+[код allocator](./code/lec36/allocator.cpp)\
+[код vector](./code/lec36/vector.cpp)
+
+
+# Лекция 37
+## [Версии оператора new](https://en.cppreference.com/w/cpp/memory/new/operator_new)
+
+- [std::nothrow_t](https://en.cppreference.com/w/cpp/memory/new/nothrow) - тип, который нужен, чтобы объявить переменную `std::nothrow`
+
+это версия оператора `new`, которая не бросает исключение
+
+пример по ссылке выше
+```cpp
+try {
+    while (true) {
+        new int[100000000ul];   // throwing overload
+    }
+} catch (const std::bad_alloc& e) {
+    std::cout << e.what() << '\n';
+}
+
+while (true) {
+    int* p = new(std::nothrow) int[100000000ul]; // non-throwing overload
+    if (p == nullptr) {
+        std::cout << "Allocation returned nullptr\n";
+        break;
+    }
+}
+```
+
+- можно написать `new` с произвольным набором параметров
+```cpp
+void* operator new(size_t n, int a, double b) {
+    std::cout << n << " bytes allocated with custom new " << a << " " << b << "\n";
+    return malloc(n);
+}
+
+int main() {
+    int* p = new(1, 3.14) int(5);
+    delete p; // UB
+}
+```
+если вызвали `new` с кастомными параметрами, то ему нужно симметрично вызывать `delete` с кастомными параметрами. но только для `delete` это будет именно функция `operator delete` и деструктор нужно будет вызывать руками. потому что нет синтаксиса по вызову оператора `delete` с кастомными параметрами
+
+```cpp
+void* operator new(size_t n, int a, double b) {
+    std::cout << n << " bytes allocated with custom new " << a << " " << b << "\n";
+    return malloc(n);
+}
+
+void operator delete(void* ptr, int a, double b) {
+    std::cout << "custom delete called " << a << " " << b << "\n";
+    free(ptr);
+}
+
+int main() {
+    int* p = new(1, 3.14) int(5); // 4 bytes allocated with custom new 1 3.14
+    operator delete(p, 1, 5.25); // custom delete called 1 5.25
+}
+```
+следовательно, для нетривиального типа нужно было бы вручную вызывать деструктор
+
+- сценарий, когда `delete` с кастомными параметрами вызывается за нас
+```cpp
+struct S {
+    S() { throw 1; }
+};
+int main() {
+    try {
+        S* p = new(1, 3.14) S();
+    } catch (...) {
+        std::cout << "caught\n";
+    }
+}
+```
+в таком случае гарантируется, что за нас будет вызван оператор `delete` от таких же параметров на этом адресе, и только потом полетит исключение
+
+- оператор `delete` и виртуальный деструктор
+```cpp
+struct Base {
+    Base() { std::cout << "created Base\n"; }
+    ~Base() { std::cout << "destroyed Base\n"; }
+};
+
+struct Derived : Base {
+    int* p;
+    Derived() {
+        p = new int;
+        std::cout << "created Derived\n";
+    }
+    ~Derived() {
+        delete p;
+        std::cout << "destroyed Derived\n";
+    }
+};
+
+int main() {
+    Base* b = new Derived;
+    delete b;
+}
+```
+здесь будет утечка памяти - уже разбирали
+
+но даже так будет утечка
+```cpp
+struct Base {
+    Base() { std::cout << "created Base\n"; }
+    ~Base() { std::cout << "destroyed Base\n"; }
+};
+
+struct Derived : Base {
+    int x = 0;
+    Derived() { std::cout << "created Derived\n"; }
+    ~Derived() { std::cout << "destroyed Derived\n"; }
+};
+
+int main() {
+    Base* b = new Derived;
+    delete b;
+}
+```
+откуда `delete` знает, какой деструктор ему вызвать и по какому указателю освободить память?
+```cpp
+struct Base {
+    Base() { std::cout << "created Base\n"; }
+    ~Base() { std::cout << "destroyed Base\n"; }
+};
+
+struct Derived : Base {
+    // int x = 0;
+    Derived() { std::cout << "created Derived\n"; }
+    ~Derived() { std::cout << "destroyed Derived\n"; }
+};
+
+int main() {
+    Base* b = new Derived[5];
+    delete[] b;
+}
+```
+```
+created Base
+created Derived
+created Base
+created Derived
+created Base
+created Derived
+created Base
+created Derived
+created Base
+created Derived
+destroyed Base
+destroyed Base
+destroyed Base
+destroyed Base
+destroyed Base
+```
+`delete[]` вызывает дестукторы, думая, что это массив из Base. а потом вызывает освобождение памяти, думая, что было столько Base, сколько он прочитал из сдвига. но на самом деле там были Derived
+
+поэтому даже если нет выделения каких-то ресурсов, всё равно это будет неправильно работать - ещё одна причина делать виртуальный деструктор
+
+такое будет работать только с одним объектом!!!
+```cpp
+struct Base {
+    Base() { std::cout << "created Base\n"; }
+    virtual ~Base() { std::cout << "destroyed Base\n"; }
+};
+
+struct Derived : Base {
+    int x = 0;
+    Derived() { std::cout << "created Derived\n"; }
+    ~Derived() { std::cout << "destroyed Derived\n"; }
+};
+
+int main() {
+    Base* b = new Derived;
+    delete b; // OK
+}
+```
+но с `delete[]` всё равно будет утечка
+```cpp
+struct Base {
+    Base() { std::cout << "created Base\n"; }
+    virtual ~Base() { std::cout << "destroyed Base\n"; }
+};
+
+struct Derived : Base {
+    int x = 0;
+    Derived() { std::cout << "created Derived\n"; }
+    ~Derived() { std::cout << "destroyed Derived\n"; }
+};
+
+int main() {
+    Base* b = new Derived[5];
+    delete[] b;
+}
+```
+```
+created Base
+created Derived
+created Base
+created Derived
+created Base
+created Derived
+created Base
+created Derived
+created Base
+created Derived
+destroyed Base
+destroyed Base
+destroyed Base
+destroyed Base
+destroyed Base
+```
+
+- оператор `new` как член класса
+```cpp
+struct S {
+    void* operator new(size_t n) {
+        std::cout << "operator new for S\n";
+        return malloc(n);
+    }
+
+    void operator delete(void* ptr) {
+        std::cout << "operator delete for S\n";
+        free(ptr);
+    }
+};
+
+
+int main() {
+    S* p = new S;
+    delete p;
+}
+```
+```
+operator new for S
+operator delete for S
+```
+можно так же для `new[]` и `delete[]`
+
+для этих методов `static` считается написанным по умолчанию
+
+## Правильная реализация `operator new` из стандартной библиотеки
+[код new](https://github.com/llvm/llvm-project/blob/18650480cb2ea46c9e8236c83593216af80fa25c/libcxx/src/new.cpp#L46C44-L46C52) из libc - реализации стандартной библиотеки llvm
+
+```cpp
+static void* operator_new_impl(std::size_t size) {
+  if (size == 0)
+    size = 1;
+  void* p;
+  while ((p = std::malloc(size)) == nullptr) {
+    // If malloc fails and there is a new_handler,
+    // call it to try free up memory.
+    std::new_handler nh = std::get_new_handler();
+    if (nh)
+      nh();
+    else
+      break;
+  }
+  return p;
+}
+
+_LIBCPP_OVERRIDABLE_FUNCTION(_Znwm, void*, operator new, (std::size_t size)) _THROW_BAD_ALLOC {
+  void* p = operator_new_impl(size);
+  if (p == nullptr)
+    __throw_bad_alloc_shim();
+  return p;
+}
+```
+`new` всегда выделяет один байт. в си, а отличии от c++, не было требования, что все объекты имеют разные адреса
+
+[std::new_handler](https://en.cppreference.com/w/cpp/memory/new/new_handler) - функция, которая должна попытаться что-то сделать в случае неудачного выделения памяти, прежде чем будет брошен bad_alloc (по умочанию ничего)
+
+мы можем вызвать [std::set_new_handler](https://en.cppreference.com/w/cpp/memory/new/set_new_handler) и передать туда адрес какой-то функции. она вызовется перед тем, как будет bad_alloc
+
+`_LIBCPP_WEAK` - макрос компилятора, который разрешает переопределять
+
+## Запрет создания объектов на стеке/куче
+- как запретить создавать объекты какого-то типа T на куче (только на стеке)? можно пометить оператор `new` как `= delete`
+
+- как запретить создавать объекты какого-то типа T на стеке (только на куче)? можно сделать деструктор приватным. создание объекта на стеке подразумевает автоматически возможность вызова деструктора
+
+но как создать объект на куче? - мы не сможем вызвать `delete`
+
+в C++20 добавили специальный оператор `delete` (destroying deallocation functions) - [cppreference](https://en.cppreference.com/w/cpp/memory/new/operator_delete)
+
+это метод класса. в него нужно передать [std::destroying_delete](https://en.cppreference.com/w/cpp/memory/new/destroying_delete), тогда деструктор автоматически не вызывается. нам нужно вызывать его руками
+
+## Выравнивания
+рассмортрим пример
+```cpp
+int main() {
+    int* a = new int[10];
+    char* ac = reinterpret_cast<char*>(a);
+    ++ac;
+    int* b = reinterpret_cast<int*>(ac);
+
+    *b = 1;
+    int x = *b;
+    std::cout << x << "\n";
+
+    delete[] a;
+}
+```
+указатель на int, не кратный 4
+
+`-fsanitize=undefined`:
+```
+probe.cpp:12:8: runtime error: store to misaligned address 0x58b345a832b1 for type 'int', which requires 4 byte alignment
+0x58b345a832b1: note: pointer points here
+ 00 00 00  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  00 00 00 00 00
+              ^ 
+probe.cpp:13:9: runtime error: load of misaligned address 0x58b345a832b1 for type 'int', which requires 4 byte alignment
+0x58b345a832b1: note: pointer points here
+ 00 00 00  00 01 00 00 00 00 00 00  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  00 00 00 00 00
+              ^ 
+1
+```
+
+по стандарту это UB. не все процессоры умеют читать по адресам, не кратнвым машинному слову
+
+если мы пишем свой стековый аллокатор, надо следить за этим. если из нашего аллокатора сделали аллокатор на другой тип, надо чтобы этот тип лёг на адрес,   кратный нужному
+
+- [std::align](https://en.cppreference.com/w/cpp/memory/align) (C++11) - передаём указатель на буффер и его размер. оно сдвигает указатель, так чтобы он был выравнен, и уменьшает размер
+
+как узнать alignment?
+
+- оператор [alignof](https://en.cppreference.com/w/cpp/language/alignof) (C++11) - в compile time возвращает кратность выравнивания
+
+- как создать буффер, который будет изначально выравнен с каким-то сдвигом? - спецификатор [alignas](https://en.cppreference.com/w/cpp/language/alignas) (C++11)
+
+`alignas(число)` - перед объявлением перменной или типа
+
+- [std::aligned_alloc](https://en.cppreference.com/w/c/memory/aligned_alloc) (C++17) - `malloc` с конкретным выравниванием
+
+`malloc` (как и `new`) по умолчанию возвращает адрес по максимально возможному выравниванию для стандартных типов
+
+[std::max_align_t](https://en.cppreference.com/w/cpp/types/max_align_t) - фейковый тип, который нужен чтобы узначать его выравнивание. его выравнивание максимально возможное из стандартных типов
+
+## [Битовые поля (Bit-fields)](https://en.cppreference.com/w/cpp/language/bit_field)
+можно попросить, чтобы поле стуктуры занимало определенное количество бит, а не байт
+
+пример из cppreference
+```cpp
+struct S {
+    // three-bit unsigned field, allowed values are 0...7
+    unsigned int b : 3;
+};
+ 
+int main() {
+    S s = {6};
+    ++s.b; // store the value 7 in the bit-field
+    std::cout << s.b << '\n'; // 7
+
+    ++s.b; // the value 8 does not fit in this bit-field
+    std::cout << s.b << '\n'; // formally implementation-defined, typically 0
+}
+```
+
+# Лекция 38
+## Scoped allocators
+допустим, что мы хотим создавать контейнер из контейнеров, как передать нужный аллокатор внутрь?
+
+```cpp
+template <typename T>
+using MyAlloc = std::allocator<T>;
+
+int main() {
+    using MyString = std::basic_string<char, std::char_traits<char>, MyAlloc<char>>;
+    MyAlloc<MyString> alloc;
+
+    std::vector<MyString, MyAlloc<MyString>> v(alloc);
+    v.push_back("abc");
+    v.push_back("cde");
+}
+```
+что здесь не так?
+
+пусть MyAlloc это PoolAllocator, но тогда все строки будут иметь разные экзмепляры этого аллокатора (будет столько пулов, сколько строк в векторе)
+
+но хотим использовать один (равный для всех) аллокатор. решение:
+- [std::scoped_allocator_adaptor](https://en.cppreference.com/w/cpp/memory/scoped_allocator_adaptor) (C++11)
+```cpp
+std::vector<MyString, std::scoped_allocator_adaptor<MyAlloc<MyString>>> v(alloc);
+```
+в `scoped_allocator_adaptor` можно передать несколько аллокаторов - на каждый уровень вложенности контейнеров
+
+как должен работать `construct`? он должен создать объект T и передать экземпляр аллокатора в то, что он создаёт
+
+очень примерная реализация
+```cpp
+template <typename Alloc>
+struct scoped_allocator_adaptor {
+    Alloc alloc_;
+    
+    template<typename T, typename... Args>
+    void construct(T* ptr, const Args&... args) {
+        using InnerAlloc = typename T::allocator_type;
+        alloc_.construct(ptr, args..., InnerAlloc(alloc_)); // передаем копию нашего аллокатора, но с правильным типом
+    }
+};
+```
+вызывали construct строки с аргументами конструктора и дополнительным последним аргументом - аллокатор
+
+но нужно проверить, умеет ли объект T в принципе принимать аллокаторы?
+
+[std::uses_allocator](https://en.cppreference.com/w/cpp/memory/uses_allocator) - проверяет, есть ли у типа T using allocator_type, который создаётся из нашего аллокатора
+
+```cpp
+template <typename Alloc>
+struct scoped_allocator_adaptor {
+    Alloc alloc_;
+
+    template<typename T, typename... Args>
+    void construct(T* ptr, const Args&... args) {
+        if constexpr (std::uses_allocator_v<T, Alloc>) {
+            using InnerAlloc = typename T::allocator_type;
+            alloc_.construct(ptr, args..., InnerAlloc(alloc_));
+        } else {
+            alloc_.construct(ptr, args...);
+        }
+    }
+};
+```
+это всё ещё не совсем правда, не будем углубляться в точную реализацию
+
+## [Атрибуты](https://en.cppreference.com/w/cpp/language/attributes) (C++11)
+можно помечать функции и аргменты функций атрибутами
+
+они пишутся в двойных квадратных скобках `[[...]]`
+
+- [no_unique_address](https://en.cppreference.com/w/cpp/language/attributes/no_unique_address) - можно этому объекту не заводить отдельный адрес
+- [nodiscard](https://en.cppreference.com/w/cpp/language/attributes/nodiscard) - выдаёт warning, если результат функции не используется
+- [deprecated](https://en.cppreference.com/w/cpp/language/attributes/deprecated) - что-то устарело
+- [maybe_unused](https://en.cppreference.com/w/cpp/language/attributes/maybe_unused) - этот аргумент может не использоваться в теле функции
+- [likely/unlikely](https://en.cppreference.com/w/cpp/language/attributes/likely) - подсказки о ветвлении, чтобы лучше оптимизировать код
+- [assume](https://en.cppreference.com/w/cpp/language/attributes/assume) - предположение о каком-то условии, чтобы исходя из этого условия лучше оптимизировать код
+
+## [Move-семантика](../move/theory.md) (С++11)
+с нашими текущими знаниями очевидно, что многие вещи работают не оптимально
+
+- рассмотрим пример
+```cpp
+std::vector<std::string> v;
+v.push_back("abc");
+```
+где `push_back` выглядит вот так
+```cpp
+void push_back(const T& value) {
+    // ...
+    new(ptr) T(value); // явно такого нет, но сводится к этому
+    // ...
+}
+```
+что происходит со строкой?
+1) создаётся временная строка из `const char*`
+2) к ней привязывается константкая ссылка, как к временному объекту
+3) вызывается конструктор с помощью `placement new`
+4) временная строка уничтожается
+
+итого: было создано 2 строки
+
+как нам научиться класть объекты так, чтобы не копировать их второй раз?
+
+даже если напишем так, это ничему не поможет
+```cpp
+v.push_back(std::string("cde"));
+```
+
+- `emplace_back` - метод, который принимает не объект T, а аргументы, из которых создаёт T на месте
+
+```cpp
+template <typename... Args>
+void emplace_back(const Args&... args) {
+    // ...
+    new(ptr) T(args...);
+    // ...
+}
+```
+здесь
+1) принимается ссылка на `const char*`
+2) вызывается конструктор с помощью `placement new`
+
+итог: создана только 1 строчка
+
+но глобально это проблему не решает. мы просто спустили проблему на уровень глубже. пример - `std::vector<std::vector<std::string>>`. промежуточный вектор создан не будет, но под каждую строку будет создан промежуточный объект
+
+- проблема не только с контейнерами, а с любым сохранением данных в какой-то класс
+```cpp
+struct S {
+    std::string data;
+    S(const std::string& str) : data(str) {}
+};
+```
+как бы мы не приняли строку (по значению, ссылке, константной ссылке), нам нужно будет её скопировать
+
+- ещё одна проблема - исключения
+```cpp
+std::string s("abc");
+throw s;
+```
+чтобы бросить объект, надо сначала его создать, а только потом скопировать в динамическую память
+
+- [move конструктор](https://en.cppreference.com/w/cpp/language/move_constructor)\
+идея: хотим забирать данные, а не копировать
+
+мы берём строку, её поля зануляем, а себе забирем то, что у неё лежало
+
+```cpp
+class string {
+public:
+    string(string&& other) // некий новый тип ссылок
+        : arr(other.arr), sz(other.sz), cap(other.cap)
+    {
+        other.arr = nullptr;
+        other.sz = other.cap = 0;
+    }
+
+private:
+    char* arr;
+    size_t sz;
+    size_t cap;
+};
+```
+мы пока не знаем, что это за тип - `string&&`. объясним это позже
+
+зачем мы делаем `other.sz = other.cap = 0`? мы хотим, чтобы объект остался в консистентном состоянии (чтобы мы могли им дальше пользоваться)
+
+можно сделать `= default`. тогда просто поэлеметно будут вызваны move конструкторы полей. а если поля обычные типы, то будет обычное копирование
+
+- [move оператор присваивания](https://en.cppreference.com/w/cpp/language/move_assignment)
+```cpp
+string& operator=(string&& other) {
+    if (this == &other){
+        return *this;
+    }
+    delete[] arr;
+
+    arr = other.arr; other.arr = nullptr;
+    sz  = other.sz;  other.sz  = 0;
+    cap = other.cap; other.cap = 0;
+    return *this;
+}
+```
+
+- [rule of five](https://en.cppreference.com/w/cpp/language/rule_of_three)
+
+Если у нас в классе есть хотя бы один нетривиальный:
+1) **copy конструктор**
+2) **copy assignment оператор**
+3) **деструктор**
+4) **move конструктор**
+5) **move assignment оператор**
+
+то надо реализовать их всех
+
+- move для базовых типов = копирование !!!
+
+поэтому дефолтный move конструктор не подходит для строки, вектора и любых типов, у которых нетривиальное копирование (скопируется указатель)
+
+можно вообще не писать move конструктор и move оператор присваивания, тогда в случае попытки их вызова будут вызываться их копирующие аналоги
+
+это и есть обратная совместимость с C++03: если не упоминаем move конструктор и move оператор присваивания, то всё работает по старинке (как будто мы копируем). именно поэтому весь наш прошлый код работал ожидаемо
+
+
+# Лекция 39
+- тип, который можно мувать, но нельзя копировать
+
+можно написать для типа move операции, но для копирования пометить `= delete`
+
+пример - `std::unique_ptr`. понятно, что по смыслу его нельзя скопировать. но можно мувнуть, забрав владение
+
+## Mistic function [std::move](https://en.cppreference.com/w/cpp/utility/move)
+как компилятор понимает, когда вызывать move операции?
+
+короткий ответ: если компилятор видит, что мы вызываемся от rvalue, то он автоматически вызывает move операцию (если может), а от lvalue вызывает копирующую операцию
+
+`std::move` - функция, которая заставляет вызвать move операцию, несмотря на то, что переменная была lvalue (пока это не точное и наивное определение)
+
+хотим написать что-то такое
+```cpp
+struct S {
+    std::string data;
+    S(const std::string& data) : data(std::move(data)) {}
+};
+```
+но здесь это не сработает, здесь будет копирование из-за `const`, а мувающая версия принимает неконстантный тип
+
+поэтому надо написать вот так
+```cpp
+struct S {
+    std::string data;
+    S(const std::string& data) : data(data) {}
+    S(std::string&& data) : data(std::move(data)) {}
+};
+```
+для lvalue - будет работать как раньше\
+для rvalue - попадем в move конструктор
+
+```cpp
+struct S {
+    std::string data;
+    S(const std::string& data) : data(data) {
+        std::cout << "1\n";
+    }
+    S(std::string&& data) : data(std::move(data)) {
+        std::cout << "2\n";
+    }
+};
+
+int main() {
+    std::string str = "abc";
+    S s1(str); // 1
+    S s2("cde"); // 2
+}
+```
+
+причем если мы не напишем `std::move`, то всё равно будет копирование. data это не временный объект. `std::string&&` просто позволяет вызваться от временного объекта, но сам объект data уже не временный !!!
+
+роль move в том, чтобы перенаправить перегрузку функции по другому пути (move операции)
+
+- как теперь решить проблему с `push_back`?
+```cpp
+void push_back(const T& value) {
+    // ...
+    new(ptr) T(value);
+    // ...
+}
+
+void push_back(T&& value) { // для временного объекта
+    // ...
+    new(ptr) T(std::move(value));
+    // ...
+}
+```
+
+- как решить проблему с исключениями?
+
+она решена сама собой
+```cpp
+std::string s("abc");
+throw s;
+```
+с C++11 по стандарту вызывается move конструктор, а не copy конструктор (по возможности)
+
+- реализцая `std::swap` через `std::move`
+
+наша старая плохая реализация
+```cpp
+template <typename T>
+void swap(T& x, T& y) {
+    T tmp = x;
+    x = y;
+    y = tmp;
+}
+```
+трижды линейное время (в случае долгих копирований)
+
+хорошая реализация
+```cpp
+template <typename T>
+void swap(T& x, T& y) {
+    T tmp = std::move(x);
+    x = std::move(y);
+    y = std::move(tmp);
+}
+```
+константное время, если тип поддерживает move операции
+
+- наивная реализация `std::move`
+```cpp
+template <typename T>
+T&& move(T& x) {
+    return static_cast<T&&>(x);
+}
+```
+это неправильная реализация. такое работает в 90% случаев и покрывает все те случаи, которые были выше
+
+функция `move` ничего никуда не мувает. это просто каст к rvalue. для процессора в рантайме она не означает никаких инструкций, она имеет смысл только на этапе компиляции
+
+заметим, что такое не сработает
+```cpp
+template <typename T>
+T&& move(T& x) {
+    return x;
+}
+```
+нет неявного каста из `T&` в `T&&` (наоборот есть, обсудим позже)
+
+## Формальное определение rvalue и lvalue
+lvalue и rvalue are categories of [expressions](https://en.cppreference.com/w/cpp/language/expressions), not types !!!
+
+некорректен вопрос: какого value этот тип? типы не обладают никаким видом value сами по себе. только выражения обдалают видом value
+
+цитата из cppreference: `Each C++ expression is characterized by two independent properties: A type and a value category.`
+
+если говорить философски:
+- lvalue - то, что лежит в памяти
+- rvalue - то, что необязательно лежит в памяти
+
+Формальное определение:
+
+<table>
+<tr>
+<th> lvalue </th>
+<th> rvalue </th>
+</tr>
+<tr>
+<td>
+
+- id; (любая переменная сама по себе, это lvalue, неважно какой у нее тип).  идентификатор - частный случай expression
+- cтроковые литералы: `"abc"`
+- `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `|=`, `^=`
+- `++expr`, `--expr`
+- `*ptr`, `a[i]`
+- `a, b` (comma) if rhs is lvalue
+- `a ? b : c` (conditional) if both operands are lvalue
+- `a(...)` (function call) is lvalue, if return type is `T&`
+- cast-expression is lvalue, if return type is `T&`
+
+</td>
+<td>
+
+- литералы: `5`, `'a'`, `2.0f`, `true` (кроме случаев, когда это строковый литерал)
+- `+`, `-`, `*`, `/`, `%`, `<<`, `>>`, `&`, `|`, `^`, `~`, `&&`, `||`, `!`, `<`, `>`, `<=`, `>=`, `==`, `!=` (над фундаментальными типами)
+- `expr++`, `expr--` (над фундаментальными типами)
+- `&a`
+- `a, b` (comma) if rhs is rvalue
+- `a ? b : c` (conditional) at least one operand is rvalue
+- `a(...)` (function call) is rvalue, if return type is `T` or `T&&`
+- cast-expression is rvalue, if return type is `T` or `T&&`
+- `new`
+
+</td>
+</tr>
+</table>
+
+## Rvalue-ссылки
+rvalue ссылка - тип такого вида: `T&&`, где T - некоторый фиксированный тип
+
+Свойства:
+1) rvalue ссылка - такая ссылка, которая будучи возвращённой из функции считается rvalue
+2) проинициализировать её можно только rvalue выражением
+
+- пример 1
+```cpp
+int x = 5;
+int&& y = x; // CE
+```
+x - не rvalue
+
+- пример 2
+```cpp
+int&& y = 6; // OK
+```
+продление жизни (lifetime prolongation)
+
+- пример 3
+```cpp
+int&& y = 6;
+y = 7; // OK
+```
+создали временный объект типа int от 6, и изменили его на 7 
+
+- пример 4
+```cpp
+int&& y = 6;
+int&& z = y; // CE
+```
+имя переменной - это всегда lvalue, неважно какой у нее тип. чтобы это работало и нужен `std::move`
+
+- пример 5
+```cpp
+int&& y = 6;
+int&& z = std::move(y); // OK
+```
+- пример 6
+```cpp
+int x = 5;
+int&& t = static_cast<int&&>(x); // OK
+```
+аналогично, только руками делаем каст
+
+- пример 7
+```cpp
+int x = 5;
+int&& t = static_cast<int&&>(x);
+t = 1; // x = 1
+```
+t это такая же ссылка, как и раньше (другое названия для x)
+
+
+# Лекция 40
+- как можно интуитивно понимать `std::move`
+
+![alt text](img/43.png)
+(тут на картинки не симметричные, но смысла не меняет)
+
+type - тип, над которым определено больше операций, чем над const type. Если мы хотим const type принять по type ссылке (разрешить над ним операции, которые по умолчанию над ним запрещены), мы должны явно писать `const_cast`, но обратно работает неявно
+
+аналогично, Derived - тип, над которым определено больше операций, чем над Base. если мы хотим Base принять по Derived ссылке (расширить круг операций), мы должны явно писать `static_cast`, но обратно тоже работает неявно
+
+то есть сужать множество операций можно неявно, а расширять надо явно через каст
+
+аналогично для видов value
+
+`std::move` это в каком-то виде каст, но не между типами, а между value. над lvalue определены какие-то операции, а над rvalue определено больше операций. потому что над rvalue определена операция - забрать его данные и опустошить его, а самому себе присвоить то, что ему принадлежало
+
+поэтому можно сказать, что `std::move` это и есть каст, расширяющий множество операций
+
+![alt text](img/44.png)
+
+- вспомним свойста rvalue ссылок
+```cpp
+int x = 5;
+int&& y = std::move(x);
+int&& z = std::move(y);
+int t = 6;
+z = t;
+std::cout << x << y << z; // 666
+```
+по сути, имеем 3 имени для одной переменной x
+
+rvalue ссылки так же умеют продлевать жизнь объектам
+```cpp
+int&& r = 1;
+```
+создастся объект, к которому будет привязано имя r, также как
+```cpp
+const int& r = 1;
+```
+но в старом случае его нельзя было менять, а сейчас можно
+
+`T&&` -> `T&` кастится неявно
+```cpp
+int x = 5;
+int&& y = std::move(x); // OK
+int& z = y; // OK
+z = 6;
+std::cout << x << y << z; // 666
+```
+
+## Взаимодействие rvalue-ссылок и const
+- правила константности действуют независимо от правил вида value
+
+навешивать const можно, снимать только через `const_cast`
+```cpp
+int x = 5;
+const int&& y = std::move(x); // OK
+int&& z1 = std::move(y); // CE
+int&& z2 = std::move(const_cast<int&>(y)); // OK
+int&& z3 = const_cast<int&&>(std::move(y)); // OK
+z3 = 6;
+std::cout << x << z2 << z3; // 666
+```
+`const_cast` для z2 нужен именно, чтобы убрать константность c `const int&&`, а дальше каст `int&&` -> `int&` сделается неявно
+
+на самом деле `const_cast` можно делать даже без `std::move`
+```cpp
+int x = 5;
+const int&& y = std::move(x); // OK
+int&& z = const_cast<int&&>(y); // OK
+z = 6;
+std::cout << x << z; // 66
+```
+
+- если бы в нашей реализации move с прошлой лекции, мы приняли `const T&`
+
+такое не работает
+```cpp
+template <typename T>
+T&& move(const T& x){
+    return static_cast<T&&>(x); // CE
+}
+```
+нельзя с помощью `static_cast` скастовать от константного T к неконстантному
+
+- рассмотрим такую функцию
+```cpp
+template <typename U>
+void f(const U& x){
+    g(std::move(x));
+}
+```
+в move попадёт шаблонный тип `T` = `const U` из нашей функции f, поэтому из move мы вернем `const U&&`
+
+если функция g определена двумя способами (пусть для строчек)
+```cpp
+void g(const std::string& x) {/**/}
+void g(std::string&& x) {/**/}
+```
+то мы попадём в первую версию `const std::string&`. мы не можем отдать константное rvalue, туда где ожидается неконстантное rvalue
+
+`const U&&` - > `const U&` - OK\
+`const U&&` - > `U&&` - CE
+
+поэтому, если мы мувнем константный тип, ничего плохого не случится!
+
+мы всё равно попадём в копирующую версию (если представить что g это не функция, а конструктор). константность независимо от вида value защищает от изменений
+
+```cpp
+template <typename T>
+T&& move(T& x) {
+    return static_cast<T&&>(x);
+}
+
+void g(std::string&& x) {
+    std::cout << "std::string&&\n";
+    x = "cde"; // пытаемся испортить строку
+}
+void g(const std::string&) {
+    std::cout << "const std::string&\n";
+}
+
+template <typename U>
+void f(const U& x){
+    g(move(x));
+}
+
+int main() {
+    std::string s = "abc";
+    f(s);
+    std::cout << s << "\n";
+}
+```
+```
+const std::string&
+abc
+```
+
+<!-- на самом деле это позволяет нам писать `std::move` даже для копирующего конструктора
+```cpp
+struct S {
+    MyString data;
+    S(const MyString& data) : data(move(data)) {
+        std::cout << "1\n";
+    }
+    S(MyString&& data) : data(move(data)) {
+        std::cout << "2\n";
+    }
+};
+```
+хотя сейчас в этом нет особого смысла -->
+
+## Закрепим знания про rvalue-ссылки
+- `T&&` - это такой тип, который во всем аналогичен `T&`, кроме двух основных пунктов: инициализировать его можно только через rvalue, и если вернуть такой тип из функции, то это выражение будет считаться rvalue
+
+обычная ссылка, просто инициализировали через rvalue
+```cpp
+std::string x = "abc";
+std::string&& y = std::move(x);
+std::cout << x << " " << y << "\n"; // abc abc
+```
+но вот так
+```cpp
+std::string x = "abc";
+std::string y = std::move(x);
+std::cout << x << " " << y << " " << y.empty() << "\n"; // abc 0
+```
+вызвался мув конструктор от строчки x, мы забрали её содержимое, поэтому она теперь пустая
+
+## Reference qualifiers
+```cpp
+struct S {
+    std::string str;
+    std::string getData() const {
+        return str;
+    }
+};
+
+int main() {
+    S{"abc"}.getData();
+}
+```
+
+здесь
+1) создастся строка str от "abc"
+2) в getData() из str создастся еще одна строка и вернется наружу
+
+иногда хочется иначе работать с объектом, если `*this` это rvalue. хотим, чтобы при вызове метода у rvalue объекта, getData мувала бы строку, а не копировала её
+
+у нас уже есть перегрузка между const и не const объектами. научимся ещё делать перегрузку между rvalue и lvalue объектами
+
+- Reference qualifiers (C++11)
+```cpp
+std::string getData() && {
+    return std::move(str);
+}
+```
+теперь этот метод доступен только для rvalue объектов
+
+мы хотим достать строку из временного объекта, который сейчас умрёт. поэтому мы возвращаем строку по значению, она будет создана мув конструктором из str. str станет пустой, но нам это и не важно, ведь весь объект S сейчас умрёт
+
+- симметрично можно сделать только для lvalue объектов
+```cpp
+std::string getData() & {
+    return str;
+}
+```
+
+- но если написать вот так
+```cpp
+std::string getData() const & {
+    return std::move(str);
+}
+```
+аналогично константным ссылкам в параметрах. сможем вызываться, как от lvalue, так и от rvalue
+
+мы как будто приняли себя по константной ссылке
+
+- перегрузка, когда мы себя приняли по константной ссылке и по rvalue ссылке
+```cpp
+struct S {
+    std::string str;
+    std::string getData() const & {
+        return str;
+    }
+    std::string getData() && {
+        return std::move(str);
+    }
+};
+```
+в 1 случае себя менять нельзя (как будто по константной ссылке), во 2 случае можем из себя достать данные (как будто по rvalue ссылке)
+
+```cpp
+S s = S{"abc"};
+std::cout << s.getData() << "\n"; // abc
+std::cout << std::move(s).getData() << "\n"; // abc
+std::cout << s.getData() << "\n"; // пустая строка
+```
+1 и 3 строка - вызываемся от lvalue. во 2 строке вытащили строку str из объекта s
+```cpp
+const S s = S{"abc"};
+std::cout << s.getData() << "\n"; // abc
+std::cout << std::move(s).getData() << "\n"; // abc
+std::cout << s.getData() << "\n"; // abc
+```
+`std::move(s)` сделал каст `const std::string&` -> `const std::string&&`. как и обсуждали раньше, такое неявно скастится к `const std::string&` и вызовется первая версия
+
+- если напишем так
+```cpp
+struct S {
+    std::string str;  
+    std::string getData() & {
+        return str;
+    }
+    std::string getData() && {
+        return std::move(str);
+    }
+};
+```
+то 1 метод можно будет вызывать только от lvalue, но его нельзя будет вызывать от константых объектов
+
+здесь будет аналогично
+```cpp
+S s = S{"abc"};
+std::cout << s.getData() << "\n"; // abc
+std::cout << std::move(s).getData() << "\n"; // abc
+std::cout << s.getData() << "\n"; // пустая строка
+```
+но вот здесь
+```cpp
+const S s = S{"abc"};
+std::cout << s.getData() << "\n"; // CE
+std::cout << std::move(s).getData() << "\n"; // CE
+```
+но вот так всё ок - сбросили const, добавили &
+```cpp
+const S s = S{"abc"};
+std::cout << std::move(const_cast<S&>(s)).getData() << "\n"; // abc
+```
+
+- вывод: в операторе присваивания нужно писать &, чтобы к rvalue ничего нельзя было присвоить
+
+## Forwarding references
+- вспомним проблему `push_back`. у нас было 2 метода
+```cpp
+void push_back(const T&) {/**/}
+void push_back(T&&) {/**/}
+```
+они отличаются только одной строчкой
+```cpp
+new(ptr) T(value);
+new(ptr) T(std::move(value));
+```
+
+но это обман. ведь на самом деле там написано `alloc.construct(...)`. как она выглядит? [ответ](./code/lec36/allocator.cpp)
+```cpp
+template <typename U, typename... Args>
+void construct(U* ptr, const Args&... args) {
+    new (ptr) U(args...);
+}
+```
+мы принимаем аргументы по константной ссылке. то есть мы не можем так мувать аргументы
+
+но принять по rvalue ссылке `Args&&... args` мы не можем, т.к. тогда это не будет работать для lvalue
+
+- такая же проблема c `emplace_back`
+```cpp
+template <typename... Args>
+void emplace_back(const Args&... args) {
+    // ...
+    new(ptr) T(args...);
+    // ...
+}
+```
+всё аналогично -  аргументы будут копироваться
+
+- в обоих функциях у нас переменное число аргументов. некоторые из них могут быть lvalue, а некоторые rvalue. т.е. нужно сделать $2^n$ перегрузок
+
+мы научились копировать или мувать, пока это не передаётся дальше. но если нужно передать это в следующую функцию с сохранением вида value, мы не умеем такого
+
+нам нужно уметь передавать аргументы дальше в функции с сохранением вида value - того, по которому мы их приняли на данный момент. если в `emplace_back` часть аргументов нам отдали как rvalue, а часть аргументов отдали как lvalue, мы должны и дальше в `construct` отдать соответствующие аргументы как rvalue, а другие как lvalue
+
+- на самом деле сигнатура `emplace_back` всё таки выглядит так
+```cpp
+template <typename... Args>
+void emplace_back(Args&&... args) {/**/}
+```
+как же это работает?
+
+- [std::forward](https://en.cppreference.com/w/cpp/utility/forward) решает эту проблему
+
+правильная передача аргументов с сохранением вида value в следующую функцию выглядит так
+```cpp
+template <typename U, typename... Args>
+void construct(U* ptr, Args&&... args) {
+    new (ptr) U(std::forward<Args>(args)...);
+}
+```
+мы принимаем их вот по такой ссылке, но передаем дальше с помощью `std::forward`
+
+функция `std::forward` в зависимости от того, приняли ли мы аргументы как lvalue или rvalue изначально, и дальше передает их как lvalue и rvalue соответственно
+
+- но каким образом мы в `Args&&... args` принимаем хоть какое-то lvalue? ведь это противоречит определению rvalue-ссылки
+
+**нужно ввести костыль. если вот такая ссылка является шаблонным параметром функции, то это правило неверно**
+
+## Forwarding (universal) references
+если такая ссылка `T&&` является типом аргумента функции, для которой тип T является шаблонным параметром, то не применяется правило, что её можно инициализировать только через rvalue
+
+поэтому можно таким синтаксисом можно принимать как lvalue, так и rvalue
+
+еще раз: если функция принимает тип вида `T&&` , где T - это шаблонный параметр данной функции, то такая ссылка работает по иным правилам, нежели обычная rvalue ссылка
+
+1) важно, чтобы тип был шаблонным параметром самой функции, а не вышележащего класса !!!
+```cpp
+void push_back(T&&) {/**/}
+```
+вот это не попадает под исключение из правил, это шаблонный параметр класса!
+
+2) важно, чтобы тип был в точность равен типу шаблонного параметра + `&&`
+```cpp
+template <typename U, typename... Args>
+void construct(U* ptr, const Args&&... args) {/**/}
+```
+тоже не попадает под исключение из правил, навесили const!
+
+3) если написано `std::vector<Args>&&`, это тоже не попадает под исключение из правил
+
+
+- упражнение
+
+хотим написать конструктор от произвольного количества строк, причем строки могут быть как lvalue, так и rvalue
+```cpp
+struct S {
+    std::vector<std::string> v;
+
+    template<typename... Args>
+    S(Args&&... args) {
+        static_assert((std::is_convertible_v<Args, std::string> && ...));
+        v.reserve(sizeof...(args));
+        (v.push_back(std::forward<Args>(args)), ...);
+    }
+};
+```
+
+## Правила вывода шаблонного типа для обычных и универсальных ссылок
+рассмотрим вот такие функции
+```cpp
+template<typename T>
+void f(T x);
+
+template<typename T>
+void g(T& x);
+
+template<typename T>
+void h(T&& x);
+```
+для f и g всё очевидно, но для универсальных ссылок перестают работать правила вывода типа T
+```cpp
+int x = 0;
+f(x); // T = int
+g(x); // T = int
+h(x); // T = int&
+
+int& y = x;
+f(y); // T = int
+g(y); // T = int
+h(y); // T = int&
+
+int&& z = std::move(x);
+f(z); // T = int
+g(z); // T = int
+h(z); // T = int&
+```
+если функция принимает универсальную ссылку и мы вызываемся от lvalue, на T дополнительно навешивается &
+
+но если вызываемся от rvalue
+```cpp
+h(1); // T = int
+h(std::move(x)); // T = int
+```
+
+**правило: если мы вызываемся от lvalue, то T становится равным типу без ссылок с навешенным амперсандом, а если мы вызываемся от rvalue, то T выводится как обычно**
+
+а какой тогда тип имеет сам x?
+
+- reference collapsing rules
+    - `& + &` -> `&`
+    - `&& + &` -> `&`
+    - `& + &&` -> `&`
+    - `&& + &&` -> `&&`
+
+если в момент вывода типа переменной в шаблоне у нас накладываются амперсанды один на другой, то они преобразуются по такому правилу
+
+для функции h:
+- если мы передаем lvalue, то T = тип с &. на него навешивается еще &&, в итоге по правилу получается `T&`
+- а если мы передаем rvalue, то T = просто тип. на него навесилось &&, получилось просто `T&&`
+
+с помощью этого костыля функции с универсальными ссылками могут принимать как lvalue, так и rvalue и различать эти виды value (подсказка насчёт того, как работает `std::forward`)
