@@ -1,15 +1,19 @@
 #include <cstddef>
 #include <cstdint>
-#include <new>
+#include <memory>
 #include <type_traits>
 #include <iterator>
 #include <iostream>
+#include <utility>
 
-template <typename T>
+template <typename T, typename Alloc = std::allocator<T>>
 class vector {
     T* arr_ = nullptr;
     size_t sz_ = 0;
     size_t cap_ = 0;
+    Alloc alloc_;
+
+    using AllocTraits = std::allocator_traits<Alloc>;
 
     template <bool IsConst>
     class base_iterator {
@@ -64,39 +68,81 @@ public:
     const_iterator cbegin() { return {arr_}; }
     const_iterator cend() { return {arr_ + sz_}; }
 
+    vector& operator=(const vector& other) {
+        if (this == &other) {
+            return *this;
+        }
+        Alloc newalloc = AllocTraits::propagate_on_container_copy_assignment::value
+            ? other.alloc_ : alloc_;
+
+        T* newarr = AllocTraits::allocate(newalloc, other.cap_);
+        size_t i = 0;
+        try {
+            for (; i < other.sz_; ++i) {
+                AllocTraits::construct(newalloc, newarr + i, other[i]);
+            }
+        } catch(...) {
+            for (size_t j = 0; j < i; ++j) {
+                AllocTraits::destroy(newalloc, newarr + j);
+            }
+            AllocTraits::deallocate(newalloc, newarr, other.cap_);
+            throw;
+        }
+
+        for (size_t i = 0; i < sz_; ++i) {
+            AllocTraits::destroy(alloc_, arr_ + i);
+        }
+        AllocTraits::deallocate(alloc_, arr_, cap_);
+
+        arr_ = newarr;
+        sz_ = other.sz_;
+        cap_ = other.cap_;
+        alloc_ = newalloc;
+        return *this;
+    }
+
     void reserve(size_t newcap) {
         if (newcap < cap_) {
             return;
         }
 
-        T* newarr = reinterpret_cast<T*>(new char[newcap * sizeof(T)]);
+        T* newarr = AllocTraits::allocate(alloc_, newcap);
         size_t index = 0;
         try {
             for (; index < sz_; ++index) {
-                new(newarr + index) T(arr_[index]);
+                AllocTraits::construct(alloc_, newarr + index, std::move_if_noexcept(arr_[index]));
             }
         } catch (...) {
             for (size_t oldindex = 0; oldindex < index; ++oldindex) {
-                (newarr + oldindex)->~T();
+                AllocTraits::destroy(alloc_, newarr + oldindex);
             }
-            delete[] reinterpret_cast<char*>(newarr);
+            AllocTraits::deallocate(alloc_, newarr, newcap);
             throw;
         }
 
         for (size_t index = 0; index < sz_; ++index) {
-            (arr_ + index)->~T();
+            AllocTraits::destroy(alloc_, arr_ + index);
         }
-        delete[] reinterpret_cast<char*>(arr_);
+        AllocTraits::deallocate(alloc_, arr_, cap_);
         
         arr_ = newarr;
         cap_ = newcap;
     }
 
     void push_back(const T& value) {
+        emplace_back(value);
+    }
+
+    void push_back(T&& value) {
+        emplace_back(std::move(value));
+    }
+
+    template <typename... Args>
+    void emplace_back(Args&&... args) {
         if (sz_ == cap_) {
             reserve(cap_ > 0 ? cap_ * 2 : 1);
         }
-        new(arr_ + sz_) T(value);
+        AllocTraits::construct(alloc_, arr_ + sz_, std::forward<Args>(args)...);
         ++sz_;
     }
 };
@@ -149,4 +195,6 @@ int main() {
     vector<int>::iterator it = v.begin();
     vector<int>::const_iterator cit = it;
     // vector<int>::iterator it3 = cit;  // CE
+
+    std::cout << "sizeof(vector<int>) = " << sizeof(vector<int>) << "\n";
 }
