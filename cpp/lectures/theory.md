@@ -4397,8 +4397,8 @@ int main() {
 
 не нужно руками вызывать деструктор 
 
-[код allocator](./code/lec36/allocator.cpp)\
-[код vector](./code/lec36/vector.cpp)
+[итоговый код allocator](./code/lec36/allocator.cpp)\
+[итоговый код vector](./code/lec36/vector.cpp)
 
 
 # Лекция 37
@@ -5327,20 +5327,6 @@ const std::string&
 abc
 ```
 
-<!-- на самом деле это позволяет нам писать `std::move` даже для копирующего конструктора
-```cpp
-struct S {
-    MyString data;
-    S(const MyString& data) : data(move(data)) {
-        std::cout << "1\n";
-    }
-    S(MyString&& data) : data(move(data)) {
-        std::cout << "2\n";
-    }
-};
-```
-хотя сейчас в этом нет особого смысла -->
-
 ## Закрепим знания про rvalue-ссылки
 - `T&&` - это такой тип, который во всем аналогичен `T&`, кроме двух основных пунктов: инициализировать его можно только через rvalue, и если вернуть такой тип из функции, то это выражение будет считаться rvalue
 
@@ -5613,7 +5599,9 @@ h(std::move(x)); // T = int
 
 **правило: если мы вызываемся от lvalue, то T становится равным типу без ссылок с навешенным амперсандом, а если мы вызываемся от rvalue, то T выводится как обычно**
 
-а какой тогда тип имеет сам x?
+это всё работает **только** для случая, когда мы явно не указали тип T
+
+а какой тогда тип имеет сам объект x?
 
 - reference collapsing rules
     - `& + &` -> `&`
@@ -5628,3 +5616,478 @@ h(std::move(x)); // T = int
 - а если мы передаем rvalue, то T = просто тип. на него навесилось &&, получилось просто `T&&`
 
 с помощью этого костыля функции с универсальными ссылками могут принимать как lvalue, так и rvalue и различать эти виды value (подсказка насчёт того, как работает `std::forward`)
+
+
+# Лекция 41
+повторим: если функция принимает тип вида `T&&` , где T - это шаблонный параметр данной функции, то есть всего 2 варианта:
+
+1) если мы передаем lvalue, то объект будет иметь тип `T&`
+2) если мы передаем rvalue, то объект будет иметь тип `T&&`
+
+## Реализация `std::move` и `std::forward`
+- сначала исправим [код аллокатора](./code/lec36/allocator.cpp) с 36 лекции
+```cpp
+template <typename U, typename... Args>
+void construct(U* ptr, Args&&... args) {
+    new (ptr) U(std::forward<Args>(args)...);
+}
+```
+заметим, что при вызове мы явно указываем тип шаблонного параметра Args, в `forward` правила вывода типа T работать не будут!
+
+здесь args это lvalue независимо от того, передавали мы сюла lvalue или rvalue. но именно **тип Args содержит информацию об исходном value category**. если этот тип с одним амперсандом, то исходно в args попал lvalue. а если с двумя амперсандами, то исходно в args попал rvalue. и именно **благодаря явной передаче этого типа в `forward`, он сможет определить, какой именно value category был изначально**
+
+- напишем реализацию [std::forward](https://en.cppreference.com/w/cpp/utility/forward)
+
+что нам нужно написать?
+```cpp
+template <typename T>
+? forward (? value) {
+    return ?;
+}
+```
+хотим, чтобы если нам передами lvalue, то мы бы и дальше вернули lvalue. а если нам передами rvalue, то мы бы вернули rvalue **(разделить эти 2 ветки)**
+
+## Наивная попытка
+```cpp
+template <typename T>
+T&& forward(T&& value) {
+    return value;
+}
+```
+рассмотрим случаи на примере int
+1) lvalue
+```cpp
+Args = int&
+typeof(args) = int& // reference collapsing в construct
+
+T = int& // явно указали тип шаблонного параметра
+typeof(value) = int& // reference collapsing в forward
+```
+```cpp
+int&&& forward(int&&& value) {
+    return value;
+}
+```
+reference collapsing ->
+```cpp
+int& forward(int& value) {
+    return value;
+}
+```
+в `construct` попало lvalue, `forward` вызывается от lvalue, вернули lvalue - OK
+
+2) rvalue
+```cpp
+Args = int
+typeof(args) = int&& // reference collapsing в construct
+
+T = int // явно указали тип шаблонного параметра
+typeof(value) = int&&
+```
+```cpp
+int&& forward(int&& value) {
+    return value;
+}
+```
+в `construct` попало rvalue, `forward` вызывается от lvalue (переменная `int&& args` - это уже lvalue!) и пытается проинициализировать rvalue ссылку через lvalue - CE
+
+## Вторая попытка
+исправим проблему инициализации rvalue ссылки через lvalue
+```cpp
+template <typename T>
+T&& forward(T& value) {
+    return value;
+}
+```
+но теперь здесь будет та же самая проблема, только при возврате
+```cpp
+int&& forward(int& value) {
+    return value;
+}
+```
+
+в `construct` попало rvalue, `forward` вызывается от lvalue (переменная `int&& args` - это уже lvalue!) и `int& value` нормально инициализируется
+
+но на возврате из функции пытаемся проинициализировать rvalue ссылку `int&&` через `int&` - CE
+
+- исправим и эту проблему, сделаем `static_cast`
+```cpp
+template <typename T>
+T&& forward(T& value) {
+    return static_cast<T&&>(value);
+}
+```
+но кажется, что этот forward ничем не отличается от move, который мы реализовывали на позапрошлой лекции :)
+
+снова рассмотрим случаи
+1) lvalue
+```cpp
+Args = int&
+typeof(args) = int& // reference collapsing в construct
+
+T = int& // явно указали тип шаблонного параметра
+typeof(value) = int& // reference collapsing в forward
+```
+```cpp
+int&&& forward(int&& value) {
+    return static_cast<int&&&>(value);
+}
+```
+reference collapsing ->
+```cpp
+int& forward(int& value) { // здесь сработало & + & -> &
+    return static_cast<int&>(value);
+}
+```
+в `construct` попало lvalue, `forward` вызывается от lvalue, вернули lvalue - OK
+
+2) rvalue
+```cpp
+Args = int
+typeof(args) = int&& // reference collapsing в construct
+
+T = int // явно указали тип шаблонного параметра
+typeof(value) = int&&
+```
+```cpp
+int&& forward(int& value) {
+    return static_cast<int&&>(value);
+}
+```
+в `construct` попало rvalue, `forward` вызывается от lvalue (переменная `int&& args` - это уже lvalue!) и `int& value` нормально инициализируется, делаем `static_cast`, возвращаем rvalue - OK
+
+**таким образом этот код благодаря переданному типу T определяет value category исходного выражения (который был передан в `construct`)**
+
+на самом деле, тот `move`, который мы написали, это `forward` (хыхы пон)
+
+## Правильная реализация `std::move`
+поймём, что наша старая реализация [std::move](https://en.cppreference.com/w/cpp/utility/move) не совсем правильная
+
+- **`move` не должен возвращать lvalue никогда**!
+
+как мы только что выяснили, в нашей старой реализации `move` возвращает lvalue, если ему в качестве T подсунуть одиночный амперсанд, а мы хотим чтобы `move` всегда возвращал тип с двумя амперсандами
+поймём, что наша старая реализация
+**мы не хотим разделять value category исходного выражения (в отличии от `forward` не хотим разделять 2 ветки), мы хотим всегда вернуть rvalue**
+
+это произошло из-за правила reference collapsing, о котором мы раньше не знали. но мы не хотим, чтобы работало reference collapsing, когда мы возвращаем из `move`
+
+[std::remove_reference](https://en.cppreference.com/w/cpp/types/remove_reference) - снимает все амперсанды с типа
+```cpp
+template <typename T>
+std::remove_reference_t<T>&& move(T& value) {
+    return static_cast<std::remove_reference_t<T>&&>(value);
+}
+```
+мы как бы отключили правило reference collapsing для возвращаемого типа **(слили 2 ветки вместе)** и теперь всегда возвращаем rvalue ссылку
+
+- теперь поймём, что и принимаемый тип `move` не такой
+```cpp
+template <typename T>
+std::remove_reference_t<T>&& move(T&& value) {
+    return static_cast<std::remove_reference_t<T>&&>(value);
+}
+```
+в `move` можно отдавать, как и lvalue, так и rvalue. и не важно, что мы дали - на выходе всё равно будет rvalue
+
+пример - хотим передать в `move` результат какой-то функции, которая иногда возвращает lvalue, а иногда rvalue (в зависимости от T)
+```cpp
+move(f<T>(x));
+```
+
+## Правильная реализация `std::forward`
+теперь поймём, что и наша реализация `forward` не совсем правильная
+
+- **хотим, чтобы `forward` не умел выводить тип шаблонного параметра неявно**
+
+на самом деле `forward` выглядит так
+```cpp
+template <typename T>
+T&& forward(std::remove_reference_t<T>& value) {
+    return static_cast<T&&>(value);
+}
+```
+костыль такой - будем принимать не `T&`, а `std::remove_reference_t<T>&`
+
+компилятор не умеет подбирать T, чтобы `std::remove_reference_t<T>` соответствовал нужному типу
+
+если бы он умел выводить его неявно, то мы бы могли пользоваться `forward` неправильно. мы бы могли мувать, когда не надо
+
+если оставить так
+```cpp
+template <typename T>
+T&& forward(T& value) {
+    return static_cast<T&&>(value);
+}
+```
+мы бы могли написать вот так
+```cpp
+std::forward(args);
+```
+тогда компилятор бы за нас вывел шаблонный аргумент, как T = тип без амперснадов. мы бы навесили на него два амперсанда, и получилось бы что `forward` мувает, хотя не должен
+
+пример - вернемся опять к случаю с lvalue в construct
+```cpp
+Args = int&
+typeof(args) = int& // reference collapsing в construct
+
+T = int // вывелось само!!! (и причем по старым правилам вывода)
+typeof(value) = int&
+```
+```cpp
+int&& forward(int& value) {
+    return static_cast<int&&>(value);
+}
+```
+`forward` возвращает назад rvalue, хотя изначально в `construct` передали lvalue. это неправильное поведение
+
+поэтому принимаем `std::remove_reference_t<T>`
+
+- `forward` от rvalue иногда тоже имеет смысл
+
+в `forward` тоже можно отдавать, как и lvalue, так и rvalue
+
+пример такой же - хотим форвардить не напрямую аргументы, а результат какой-то функции, которая иногда возвращает lvalue, а иногда rvalue (в зависимости от T)
+```cpp
+template <typename T>
+T&& forward(std::remove_reference_t<T>& value) {
+    return static_cast<T&&>(value);
+}
+
+void foo(const std::string&) {}
+void foo(std::string&&) {}
+
+struct Arg {
+    std::string s = "abc";
+    std::string& get() &  { return s; }
+    std::string  get() && { return s; }
+};
+
+template<class T>
+void wrapper(T&& arg) {
+    using typeOfStr = decltype(::forward<T>(arg).get()); // выводим тип строчки (пока не знаем, что такое decltype)
+    foo(::forward<typeOfStr>(::forward<T>(arg).get()));
+}
+
+int main() {
+    Arg arg;
+    wrapper(arg); // OK
+    wrapper(Arg{}); // CE
+}
+```
+пусть мы хотим вызвать метод объекта (и именно для его настоящего value catergory), а результат этого ещё раз зафорвардить. причем метод возвращает rvalue строку, если изначально объект был rvalue. и lvalue строку, если изначально объект был lvalue
+
+тогда внешний вызов `forward` для rvalue даже не скомпилируется, наша версия принимает только lvalue
+
+- поэтому на самом деле у `forward` есть перегрузка
+
+здесь не получится сделать одну версию, как с `move`, потому что **`std::remove_reference_t<T>&&` - не универсальная ссылка**
+
+нужно явно сделать вторую версию для rvalue
+```cpp
+template <typename T>
+T&& forward(std::remove_reference_t<T>& value) {
+    return static_cast<T&&>(value);
+}
+
+template <typename T>
+T&& forward(std::remove_reference_t<T>&& value) {
+    static_assert(!std::is_lvalue_reference_v<T>);
+    return static_cast<T&&>(value);
+}
+```
+вторая версия форвардит rvalue как rvalue и **запрещает форвардить rvalue как lvalue**
+
+[std::is_lvalue_reference](https://en.cppreference.com/w/cpp/types/is_lvalue_reference) - проверяет, что тип является обычной ссылкой (`T&`)
+
+если не написать `static_assert`, то можно будет руками вызывать `forward<int&>(5)`
+```cpp
+template <typename T>
+T&& forward(std::remove_reference_t<T>&& value) {
+    return static_cast<T&&>(value);
+}
+```
+```cpp
+T = int& // lvalue, заданный руками
+```
+```cpp
+int&&& forward(int&& value) {
+    return static_cast<int&&&>(value);
+}
+```
+reference collapsing ->
+```cpp
+int& forward(int&& value) {
+    return static_cast<int&>(value);
+}
+```
+сфорвардили rvalue как lvalue
+
+такое может привести к висящим ссылкам. например, если эту ссылку `int&` потом куда-то сохранить, а временный объект уничтожится. поэтому запрещаем такое в compile time
+
+## Итоговый код `std::move` и `std::forward`
+```cpp
+template <typename T>
+std::remove_reference_t<T>&& move(T&& value) noexcept {
+    return static_cast<std::remove_reference_t<T>&&>(value);
+}
+
+template <typename T>
+T&& forward(std::remove_reference_t<T>& value) noexcept {
+    return static_cast<T&&>(value);
+}
+
+template <typename T>
+T&& forward(std::remove_reference_t<T>&& value) noexcept {
+    static_assert(!std::is_lvalue_reference_v<T>);
+    return static_cast<T&&>(value);
+}
+```
+навесили `noexcept`
+
+## Исправление `push_back` с учётом move семантики
+исправим [код вектора](./code/lec36/vector.cpp) с 36 лекции
+
+теперь мы можем написать так
+```cpp
+void push_back(const T& value) {
+    if (sz_ == cap_) {
+        reserve(cap_ > 0 ? cap_ * 2 : 1);
+    }
+    AllocTraits::construct(alloc_, arr_ + sz_, value);
+    ++sz_;
+}
+
+void push_back(T&& value) {
+    if (sz_ == cap_) {
+        reserve(cap_ > 0 ? cap_ * 2 : 1);
+    }
+    AllocTraits::construct(alloc_, arr_ + sz_, std::move(value));
+    ++sz_;
+}
+```
+для rvalue - просто муваем временный объект сразу в новую память. то, чего изначально и хотели
+
+на самом деле обе функции `push_back` выражаются через `emplace_back`
+```cpp
+void push_back(const T& value) {
+    emplace_back(value);
+}
+
+void push_back(T&& value) {
+    emplace_back(std::move(value));
+}
+
+template <typename... Args>
+void emplace_back(Args&&... args) {
+    if (sz_ == cap_) {
+        reserve(cap_ > 0 ? cap_ * 2 : 1);
+    }
+    AllocTraits::construct(alloc_, arr_ + sz_, std::forward<Args>(args)...);
+    ++sz_;
+}
+```
+
+## Проблема реаллокации
+в методе `reserve` мы на новом массиве создаём объекты из старых массивов
+```cpp
+for (; index < sz_; ++index) {
+    AllocTraits::construct(alloc_, newarr + index, arr_[index]);
+}
+```
+сейчас это работает с копированием. для больших объектов это долго
+
+применим `std::move`
+```cpp
+for (; index < sz_; ++index) {
+    AllocTraits::construct(alloc_, newarr + index, std::move(arr_[index]));
+}
+```
+но как быть в случае исключений? - пропало exception safety
+
+мы начали мувать объекты и вылетело исключение\
+![alt text](img/45.png)\
+и мы не можем начать просто мувать обратно - вдруг снова вылетит исключение?
+
+- [std::move_if_noexcept](https://en.cppreference.com/w/cpp/utility/move_if_noexcept) - если move конструктор `noexcept` она возвращает rvalue, иначе lvalue
+
+если move конструктор `noexcept`, то спокойно муваем. иначе копируем
+
+в таком случае действия в `catch` по прежнему верные (для мув версии просто здесь просто никогда не будет исключений)
+```cpp
+try {
+    for (; index < sz_; ++index) {
+        AllocTraits::construct(alloc_, newarr + index, std::move_if_noexcept(arr_[index]));
+    }
+} catch (...) {
+    for (size_t oldindex = 0; oldindex < index; ++oldindex) {
+        AllocTraits::destroy(alloc_, newarr + oldindex);
+    }
+    AllocTraits::deallocate(alloc_, newarr, newcap);
+    throw;
+}
+```
+**вывод: надо помечать move конструктор `noexcept`!**
+
+## Реализация [std::move_if_noexcept](https://en.cppreference.com/w/cpp/utility/move_if_noexcept)
+
+[std::is_nothrow_move_constructible](https://en.cppreference.com/w/cpp/types/is_move_constructible) - проверяет, является ли move конструктор `noexcept`
+
+[std::is_copy_constructible](https://en.cppreference.com/w/cpp/types/is_copy_constructible) - является ли копируемым
+
+```cpp
+template <typename T>
+typename std::conditional_t<
+    !std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>,
+    const T&,
+    T&&
+> move_if_noexcept(T& value) noexcept {
+    return move(value);
+}
+```
+зачем нужно второе условие?
+
+допустим, что мы хотим сделать вектор из типов, которые нельзя копировать, но можно мувать. и при этом move конструктор не помечен `noexcept`
+
+тогда вектор отказывается от exception safety. мы всё равно муваем этот тип, просто делаем это небезопасно
+
+в `move_if_noexcept` не хотим отдавать rvalue, поэтому здесь принимаем просто `T&`
+
+## `push_back` в вектор элемента того же вектора
+```cpp
+std::vector<std::string> v(5, "abc");
+v.push_back(v[3]);
+```
+приняли объект по ссылке. и до того, как мы его куда-то положили мы сделали реаллокацию (вызвали деструкторы, освободили памяли) - получили битую ссылку\
+![alt text](img/46.png)
+
+решение: сначала положим элемент в новую память, а только потом будем перекладывать старые. `v[3]` - lvalue. поэтому он просто скопируется
+
+## Переосмысление принятия параметров в функцию
+почему бы нам не перестать принимать параметры по ссылке?
+```cpp
+template <typename T>
+void f(T x) {
+    //...
+}
+```
+такое имеет смысл, если мы дальше будем куда-то сохранять или передавать x
+
+если мы принимаем lvalue, то оно скопируется и мы его сможем менять. а если мы принимаем rvalue, то оно сразу мувнется на входе в функцию -> дальше можно всегда мувать этот объект
+
+например так можно написать `push_back`
+```cpp
+void push_back(T value) {
+    //...
+}
+```
+если все объекты поддерживают move семантику, вместо 2 перегрузок можно написать 1 версию, а дальше всегда мувать этот объект value. проблема только, если объект не поддерживает move семантику
+
+в stl `push_back` всё таки имеет 2 версии. это сделано для обратной совместимости. и потому что не все типы поддерживают move семантику
+
+`push_back` не должен обязывать нас соблюдать move семантику. хотим уметь пользоваться им и по старинке
+
+конечно, если мы не хотим никуда передавать или менять этот объект, всё это не имеет смысла
+
+[итоговый код аллокатора](./code/lec41/allocator.cpp)\
+[итоговый код move и forward](./code/lec41/move_forward.cpp)\
+[итоговый код вектора](./code/lec41/vector.cpp)

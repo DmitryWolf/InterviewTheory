@@ -1,6 +1,5 @@
 #include <cstddef>
 #include <cstdint>
-#include <new>
 #include <type_traits>
 #include <iterator>
 #include <iostream>
@@ -97,7 +96,7 @@ public:
         if (sz_ == cap_) {
             reserve(cap_ > 0 ? cap_ * 2 : 1);
         }
-        new(arr_ + sz_) T(value);
+        this->construct(arr_ + sz_, value);
         ++sz_;
     }
 };

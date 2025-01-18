@@ -4,6 +4,7 @@
 #include <type_traits>
 #include <iterator>
 #include <iostream>
+#include <utility>
 
 template <typename T, typename Alloc = std::allocator<T>>
 class vector {
@@ -109,7 +110,7 @@ public:
         size_t index = 0;
         try {
             for (; index < sz_; ++index) {
-                AllocTraits::construct(alloc_, newarr + index, arr_[index]);
+                AllocTraits::construct(alloc_, newarr + index, std::move_if_noexcept(arr_[index]));
             }
         } catch (...) {
             for (size_t oldindex = 0; oldindex < index; ++oldindex) {
@@ -129,10 +130,19 @@ public:
     }
 
     void push_back(const T& value) {
+        emplace_back(value);
+    }
+
+    void push_back(T&& value) {
+        emplace_back(std::move(value));
+    }
+
+    template <typename... Args>
+    void emplace_back(Args&&... args) {
         if (sz_ == cap_) {
             reserve(cap_ > 0 ? cap_ * 2 : 1);
         }
-        AllocTraits::construct(alloc_, arr_ + sz_, value);
+        AllocTraits::construct(alloc_, arr_ + sz_, std::forward<Args>(args)...);
         ++sz_;
     }
 };
