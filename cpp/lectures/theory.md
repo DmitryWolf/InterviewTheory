@@ -6091,3 +6091,911 @@ void push_back(T value) {
 [итоговый код аллокатора](./code/lec41/allocator.cpp)\
 [итоговый код move и forward](./code/lec41/move_forward.cpp)\
 [итоговый код вектора](./code/lec41/vector.cpp)
+
+
+# Лекция 42
+## Перегрузка по универсальной ссылке
+посмотрим на такой код
+```cpp
+template <typename T>
+class Optional {
+public:
+    Optional() = default;
+
+    Optional(const Optional&) {
+        std::cout << "A\n";
+    }
+    template <typename U>
+    Optional(Optional<U>&&) {
+        std::cout << "B\n";
+    }
+    template <typename U>
+    Optional(U&&) {
+        std::cout << "C\n";
+    }
+};
+
+int main() {
+    Optional<int> a;
+    Optional<int> b(a); // C
+}
+```
+почему так?
+
+1) вариант B не может быть в принципе, т.к. там rvalue ссылка (это не универсальная ссылка!)
+2) **точная подстановка всегда лучше, чем приведение типов**
+
+в C можно принять `U = Optional<int>&` и принимаемый тип будет `Optional<int>&`. это будет точное соответсвие. а в варианте A принимаем `const Optional`, но у нас Optional не константный
+
+остаётся только C
+
+но вот так будет B
+```cpp
+template <typename T>
+class Optional {
+public:
+    Optional() = default;
+
+    Optional(const Optional&) {
+        std::cout << "A\n";
+    }
+    template <typename U>
+    Optional(Optional<U>&) {
+        std::cout << "B\n";
+    }
+    template <typename U>
+    Optional(U&&) {
+        std::cout << "C\n";
+    }
+};
+
+int main() {
+    Optional<int> a;
+    Optional<int> b(a); // B
+}
+```
+1) вариант A опять подходит хуже из-за const
+2) между B и C лучше подойдёт B. опять частное предпочтительнее общего. в C подходит всё то же, что в B, но и ещё что-то. B это частный случай C
+
+и даже так
+```cpp
+template <typename T>
+class Optional {
+public:
+    Optional() = default;
+
+    Optional(const Optional&) {
+        std::cout << "A\n";
+    }
+    template <typename U>
+    Optional(Optional<U>&&) {
+        std::cout << "B\n";
+    }
+    template <typename U>
+    Optional(U&&) {
+        std::cout << "C\n";
+    }
+};
+
+int main() {
+    Optional<int> a;
+    Optional<int> b(std::move(a)); // B
+}
+```
+B это частный случай C
+
+## [std::exchange](https://en.cppreference.com/w/cpp/utility/exchange) (C++14)
+код с cppreference
+```cpp
+template<class T, class U = T>
+constexpr // Since C++20
+T exchange(T& obj, U&& new_value)
+    noexcept( // Since C++23
+        std::is_nothrow_move_constructible<T>::value &&
+        std::is_nothrow_assignable<T&, U>::value
+    )
+{
+    T old_value = std::move(obj);
+    obj = std::forward<U>(new_value);
+    return old_value; 
+}
+```
+на выходе будет RVO
+
+эффективно заменяет значение obj значением new_value и возвращает obj. когда можно мувнуть мувает, иначе копирует
+
+## [std::move_iterator](https://en.cppreference.com/w/cpp/iterator/move_iterator) (С++11)
+адаптор над итератором, который ведёт себя так же, как нижележащий итератор. только разыменование даёт rvalue ссылку, а не lvalue ссылку
+
+пусть мы хотим поместить в контейнер какой-то диапазон элементов. и нам могли бы отдать этот диапазон вот такими move итераторами. тогда контейнер должен положить эти элементы не копированием, а муваньем
+
+[std::make_move_iterator](https://en.cppreference.com/w/cpp/iterator/make_move_iterator) - создаёт move итератор
+```cpp
+std::vector<std::string> v{"this", "_", "is", "_", "an", "_", "example"};
+std::string concat;
+for (auto begin = std::make_move_iterator(v.begin()),
+            end = std::make_move_iterator(v.end());
+        begin != end; ++begin)
+{
+    std::string temp{*begin};
+    concat += temp;
+}
+std::cout << concat; // this_is_an_example
+```
+
+## Allocator-aware контейнеры
+
+на самом деле в `std::allocator_traits` есть ещё метафункция `propagate_on_container_move_assignment` - аналогично копирующей версии
+
+пусть мы пишем move оператор присваивания для вектора. но при этом у них разные аллокаторы (например на разных пулах). если `propagate_on_container_move_assignment` = false (т.е. нужно оставить свой аллокатор), то мы не сможем мувнуть.
+
+каждый отдельный элемент можно мувнуть, но нельзя мувнуть весь массив.тогда всё равно придётся делать это за линейное время
+
+**поэтому move оператор присваивания для контейнеров работает быстро, только если всё хорошо с аллокаторами**
+
+## Expired values
+- до C++11 интуиция была такая
+
+lvalue это то, чему **соответствует какая-то ячейка памяти** (у чего можно взять адрес). а rvalue это то, чему **не обязательно** соответствует какая-то ячейка памяти (оно может фигурировать в промежуточных вычислениях компилятора, но в память так и не быть положено)
+
+- начиная с C++11 [value categories](https://en.cppreference.com/w/cpp/language/value_category) не 2, а 5
+
+![alt text](img/47.png)
+
+**glvalue** - generalized lvalue\
+**prvalue** - pure rvalue\
+**xvalue** - expired rvalue
+
+всё то, что мы назвали lvalue и rvalue остаётся правильным. просто rvalue подразделяется на 2 вида - xvalue и prvalue. а xvalue и lvalue являются некой обощённой категорией value
+
+- xvalue
+1) function call, if return type is `T&&`
+2) cast-expression is rvalue, if return type is `T&&`
+3) обращение по точке или `->` к rvalue
+4) обращение по `[]` к rvalue 
+
+полный список с [cppreference](https://en.cppreference.com/w/cpp/language/value_category#xvalue):
+![alt text](img/48.png)
+
+теперь наша прошлая интуиция не совем верна. xvalue как раз та особая категория, которой обязательно должно что-то соответствовать в памяти, но при этом оно ведёт себя как rvalue
+
+**xvalue ведёт себя как rvalue**, не смотря на то, что оно обязано быть создано и куда-то положено
+
+- теперь glvalue это то, чему **соответствует какая-то ячейка памяти**, а rvalue **не обязательно**
+
+всех этих вещей не нужно знать, чтобы понимать move семантику. всё то, что мы описали уже и так правильно работает в терминах только lvalue и rvalue
+
+зачем мы выделили xvalue в отдельную подкатегорию? - copy elision
+
+## [Copy elision](https://en.cppreference.com/w/cpp/language/copy_elision)
+сколько и какие вызовутся конструкторы?
+```cpp
+std::string s = std::string("abc");
+```
+кажется, что
+1) конструктор от `const char*`
+2) move конструктор для s
+
+но на самом деле вызовется только один для s
+
+- **если объект инициализируется посредством prvalue, то промежуточный объект можно впринципе не создавать**
+
+результат вызова конструктора это prvalue, поэтому компилятор имеет право не создавать временный объект, а сразу проинициализировать s
+
+но если написать так
+```cpp
+std::string s = std::move(std::string("abc"));
+```
+то это уже будет xvalue, и тогда это правило не действует
+
+xvalue должно быть создано и куда-то положено. поэтому `move` здесь гарантирует, что сначала создастся промежуточная строка, а только потом мувнется в s
+
+- Guaranteed copy elision (C++17)\
+начиная с C++17 компилятор **обязан не создавать промежуточный объект**
+
+примеры
+```cpp
+struct S {
+    int x = 0;
+    S(int x) : x(x) {
+        std::cout << "Created\n";
+    }
+    S(const S& s) : x(s.x) {
+        std::cout << "Copy\n";
+    }
+    S(S&& s) : x(s.x) {
+        std::cout << "Move\n";
+    }
+    ~S() {
+        std::cout << "Destroyed\n";
+    }
+};
+
+int main() {
+    S s = S(0);
+}
+```
+```
+Created
+Destroyed
+```
+аналогично с вложенными конструкторами
+```cpp
+int main() {
+    S s = S(S(S(S(S(S(0))))));
+}
+```
+```
+Created
+Destroyed
+```
+
+## [Temporary materialization](https://en.cppreference.com/w/cpp/language/implicit_conversion#Temporary_materialization)
+материализация временного - неявное преобразование из prvalue в xvalue
+```cpp
+int main() {
+    S s = std::move(S(S(S(S(S(S(0)))))));
+}
+```
+```
+probe.cpp:20:20: warning: moving a temporary object prevents copy elision [-Wpessimizing-move]
+   20 |  S s = std::move(S(S(S(S(S(S(0)))))));
+      |        ~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~
+
+probe.cpp:20:20: note: remove ‘std::move’ call
+```
+```
+Created
+Move
+Destroyed
+Destroyed
+```
+`move` кастит к ссылке, теперь это xvalue. тем самым мы заставили создать временный объект и вызвать move констурктор
+
+несолько случаев, когда такое происходит:
+1) инициализируем ссылку через prvalue
+2) к prvalue обращаемся через точку
+    ```cpp
+    int x = S(0).x;
+    ```
+3) игнорируем результат prvalue
+    ```cpp
+    S(S(S(S(S(S(0))))));
+    ```
+    (это не всё) ...
+
+во всех этих случаях происходит неявное преобразование из prvalue в xvalue
+
+temporary materialization не происходит, когда мы просто создаём объект из prvalue. но такое работает **только с одинаковыми типами**
+
+поэтому здесь объект S всё-таки создастся (произойдёт temporary materialization)
+```cpp
+struct T {
+    T(S) {}
+};
+
+int main() {
+    T t = S(S(S(S(S(S(10))))));
+}
+```
+```
+Created
+Destroyed
+```
+
+[Guaranteed Copy Elision Does Not Elide Copies](https://blog.tartanllama.xyz/guaranteed-copy-elision/) - хорошая статья про то, как стоит на самом деле понимать guaranteed copy elision
+
+## [Lvalue-to-rvalue conversion](https://en.cppreference.com/w/cpp/language/implicit_conversion#Lvalue-to-rvalue_conversion)
+оказывается, что ещё компилятор умеет неявно конвертировать glvalue к prvalue
+
+неформально, это **чтение из памяти**. пример:
+```cpp
+*p = *q;
+```
+`*p` это lvalue, мы туда записываем. а вот `*q` это уже prvalue. мы считали из памяти значение
+
+интуиция: взяли значение из памяти и положили в регистр процессора. хотим взять объект из памяти в руки, и что-то с ним сделать
+
+но не нужно путать: **по rvalue ссылке нельзя принять lvalue**!
+
+а вот temporary materialization (prvalue to xvalue) это наоборот: у нас на руках было какое-то значение, но мы решили его записать
+
+## Return value optimization
+иногда [copy elision](https://en.cppreference.com/w/cpp/language/copy_elision) может происходить даже на возврате из функции
+
+```cpp
+std::string f() {
+    return std::string("abc");
+}
+```
+компилятор не будет создавать промеждуточную строку для возврата из функции. но если добавим `std::move`, то опять всё испортим
+
+- NRVO (named return value optimization)
+
+работает даже для lvalue
+
+если возвращаем по значению + это **имя локальной переменной в теле данной функции** и мы всегда возвращаем **только её** (без if ветвления)
+```cpp
+std::string f() {
+    std::string str = "abc";
+    return str;
+}
+```
+компилятор умеет сразу создать эту переменную на месте, где мы ожидаем возврат из функции
+
+```cpp
+S f() {
+    S s = 1;
+    return s;
+}
+int main() {
+    S s = f();
+}
+```
+```
+Created
+Destroyed
+```
+
+опять же, `std::move` перед `return` всё испортит
+
+если же переменная не локальная (например аргумент)
+```cpp
+S f(S a) {
+    return a;
+}
+int main() {
+    S t(0);
+    S s = f(t); // вот здесь будет copy elision
+}
+```
+```cpp
+Created // создали t
+Copy // скопировали t в a
+Move // мувнули a в возвращаемое значение функции
+Destroyed
+Destroyed
+Destroyed
+```
+даже если не удаётся сделать RVO при возврате, но переменная локальная (не ссылка, а именно локальный объект!), то он её мувает, а не копирует
+
+- `std::move` перед `return`
+
+компилятор не обязан делать RVO при возврате из функции, но **он обязан как минимум мувнуть её**
+
+иногда всё таки нужно писать `std::move` перед `return` - если изначально приняли по rvalue ссылке и возвращаем этот же объект
+```cpp
+S f(S&& a) {
+    return a;
+}
+int main() {
+    S t(0);
+    S s = f(std::move(t));
+}
+```
+```
+Created
+Copy
+Destroyed
+Destroyed
+```
+а это не локальный объект. это ссылка на какой-то внеший объект. но сама переменная а это lvalue
+```cpp
+S f(S&& a) {
+    return std::move(a);
+}
+int main() {
+    S t(0);
+    S s = f(std::move(t));
+}
+```
+```
+Created
+Move
+Destroyed
+Destroyed
+```
+
+- примеры
+```cpp
+BigInteger operator+(const BigInteger& a, const BigInteger& b) {
+    BigInteger sum = a;
+    sum += b;
+    return a; // RVO
+}
+```
+1 копирование
+```cpp
+BigInteger operator+(const BigInteger& a, const BigInteger& b) {
+    BigInteger sum = a;
+    return sum += b; // возвращаем lvalue expression - нет RVO
+}
+```
+2 копирования
+```cpp
+BigInteger operator+(BigInteger a, const BigInteger& b) {
+    a += b;
+    return a; // объект не локальный - нет RVO
+}
+```
+1 копирование, 1 move
+
+```cpp
+BigInteger operator+(BigInteger&& a, const BigInteger& b) {
+    a += b;
+    return std::move(a);
+}
+```
+0 копирований, 1 move (но первый аргумент - rvalue ссылка)
+
+
+# Лекция 43
+## Вывод типов
+- `auto` (C++11)
+
+компилятор сам догадается, какой тип у переменной
+```cpp
+int main() {
+    auto x = 5; // auto = int
+}
+```
+хотим формализовать. как компилятор понимает, что это за тип?
+```cpp
+auto x = <expression>
+```
+формально, у каждого expression есть тип
+
+этот механизм сводится к выводу типов шаблона. тип такой же, как если бы написали
+```cpp
+template <typename T>
+void f(T x) {}
+
+int main() {
+    f(5);
+}
+```
+
+- `auto` со ссылками и `const`
+
+если хотим ссылку, надо явно написать &. это работает так же, как если бы мы написали вариант справа
+<style>
+table {
+    width: 100%;
+}
+</style>
+<table>
+<tr>
+<td style="width: 50%;">
+
+```cpp
+auto x = 5;
+auto& y = x; // auto = int
+```
+</td>
+<td style="width: 50%;">
+
+```cpp
+template <typename T>
+void f(T& x) {}
+```
+</td>
+</tr>
+</table>
+
+аналогично с `const`
+<table>
+<tr>
+<td style="width: 50%;">
+
+```cpp
+auto x = 5;
+const auto& z = y; // auto = int
+```
+</td>
+<td style="width: 50%;">
+
+```cpp
+template <typename T>
+void f(const T& x) {}
+```
+</td>
+</tr>
+</table>
+
+универсальная ссылка
+
+это второй случай, когда **`&&` работает не как rvalue ссылка**
+<table>
+<tr>
+<td style="width: 50%;">
+
+```cpp
+auto x = 5;
+auto&& t = x; // auto = int&
+```
+</td>
+<td style="width: 50%;">
+
+```cpp
+template <typename T>
+void f(T&& x) {}
+```
+</td>
+</tr>
+</table>
+
+t - lvalue ссылка на x, т.к применяется reference collapsing
+
+```cpp
+auto x = 5;
+auto&& t = std::move(x); // auto = int&&
+```
+но вот так уже rvalue ссылка
+
+```cpp
+auto& a = 0; // CE, lvalue ссылка
+auto&& b = 0; // OK, rvalue ссылка, продление жизни
+```
+
+пример использования
+```cpp
+template <typename Container>
+void f(Container&& container) {
+    for (auto&& value : f(container)) {
+        //...
+    }
+}
+```
+позволяем правильно обрабатывать как lvalue, так и rvalue, в зависимости от того, как передали контейнер (допустим, f возвращает какой-то диапозон с помощью move итераторов)
+
+- `auto` с указателями
+
+```cpp
+auto x = 0;
+auto* p = &x; // auto = int
+```
+
+```cpp
+int* p = new auto(5); // auto = int
+```
+
+- `auto` в возвращаемом типе функции
+```cpp
+template <typename T>
+auto g(T x) { // auto = int
+    return ++x;
+}
+int main() {
+    auto x = g(1); // auto = int
+}
+```
+```cpp
+template <typename T>
+auto g(T x) { // auto = int
+    return ++x;
+}
+int main() {
+    auto& x = g(1); // CE, справа rvalue
+}
+```
+```cpp
+template <typename T>
+auto& g(T x) { // auto = int, висячая ссылка
+    return ++x;
+}
+```
+если пытаемся вернуть разные типы
+```cpp
+template <typename T>
+auto g(T x) { // CE
+    if (x > 0) {
+        return ++x;
+    } else {
+        return 1u;
+    }
+}
+```
+даже если типы друг к другу приводятся
+```
+error: inconsistent deduction for auto return type: ‘int’ and then ‘unsigned int’
+```
+
+но работает вместе с `if constexpr`
+```cpp
+template <typename T>
+auto g(T x) {
+    if constexpr (std::is_same_v<T, int>) {
+        return x;
+    } else {
+        return 1u;
+    }
+}
+```
+конечно, нельзя сделать рекурсивно
+```cpp
+template <typename T>
+auto g(T x) {
+    if constexpr (std::is_same_v<T, int>) {
+        return g(x); // CE
+    } else {
+        return 1u;
+    }
+}
+```
+```
+use of ‘auto g(T) [with T = int]’ before deduction of ‘auto’
+```
+
+- trailing return type (C++11)
+
+покажем на примере `move`
+```cpp
+template <typename T>
+std::remove_reference_t<T>&& move(T&& value) {
+    return static_cast<std::remove_reference_t<T>&&>(value);
+}
+```
+можно написать возвращаемый тип после сигнатуры функции
+```cpp
+template <typename T>
+auto move(T&& value) -> std::remove_reference_t<T>&&
+{
+    return static_cast<std::remove_reference_t<T>&&>(value);
+}
+```
+это **не вывод типа**, это просто **способ перенести тип в конец**
+
+
+- `auto` в принимаемых типах (C++20)
+<table>
+<tr>
+<td style="width: 50%;">
+
+```cpp
+void f(auto&& x) {}
+```
+</td>
+<td style="width: 50%;">
+
+```cpp
+template <typename T>
+void f(T&& x) {}
+```
+</td>
+</tr>
+</table>
+
+можно явно указать тип
+```cpp
+f<int>(3);
+```
+можно для variadic шаблонных параметров
+```cpp
+void f(auto... x) {}
+```
+
+- `auto` в качестве шаблонного параметра
+```cpp
+template<auto N>
+struct Example {};
+
+int main() {
+    Example<2> ei;
+    Example<'a'> ec;
+}
+```
+
+- `auto` при использовании `std::initializer_list`
+```cpp
+auto lst = {1, 2, 3};
+```
+создали `std::initializer_list<int>`
+
+но при этом нельзя делать вот так
+
+```cpp
+template <typename T>
+void f(T) {}
+
+int main() {
+    f({1, 2, 3}); // CE
+}
+```
+исключение из правила, что `auto` работает аналогично шаблонным типам
+
+[AAA Style (Almost Always Auto)](https://herbsutter.com/2013/08/12/gotw-94-solution-aaa-style-almost-always-auto/) - статья про современный стиль именования переменных через `auto`
+
+## [`decltype`](https://en.cppreference.com/w/cpp/language/decltype) (C++11)
+позволяет в compile time узнать тип выражения
+```cpp
+int x = 0;
+decltype(x) y = x;
+std::vector<decltype(y)> v;
+```
+в отличии от `auto` он не отбрасывает ссылки. он возвращает **точный тип** expression
+
+поэтому умеет отличать ссылки от оригинальных объектов
+```cpp
+int x = 0;
+int& y = x;
+decltype(y) z = y; // decltype = int&
+```
+
+- `decltype` со ссылками и `const`
+
+можно навешивать &
+```cpp
+int x = 0;
+decltype(x)& t = x; // decltype = int
+```
+можно навешивать &&
+```cpp
+int x = 0;
+decltype(x)&& t = x; // CE, decltype = int
+```
+это уже не универсальная ссылка, это rvalue ссылка
+
+можно сделать вот такую структуру, чтобы было удобно узнавать тип любого expression
+```cpp
+template <typename T> // вместе с ошибкой компиляции выведет тип T
+struct Debug {
+    Debug() = delete;
+};
+```
+
+нельзя навесить const на ссылку
+```cpp
+int x = 0;
+int& y = x;
+const decltype(y) z = y; // decltype = int&, type = int&
+```
+но можно на указатель
+```cpp
+int x = 0;
+int* y = &x;
+decltype(y) const z = y; // decltype = int*, type = int* const
+const decltype(y) z2 = y; // decltype = int*, type = int* const
+const decltype(x)* z3 = y; // decltype = int, type = const int*
+```
+
+по прежнему работает reference collapsing
+```cpp
+int x = 0;
+int& y = x;
+decltype(y)&& z = y; // decltype = int&, type = int&
+```
+
+- `decltype` от выражений
+
+**`decltype` не вычисляет выражение под собой**. он лишь смотрит на его тип
+```cpp
+int x = 0;
+decltype(++x) u = x; // decltype = int&
+++u;
+std::cout << x << " " << u; // 1 1
+```
+```cpp
+decltype(++x) u = x; // decltype = int&
+decltype(x++) u2 = x; // decltype = int
+```
+```cpp
+decltype(throw 1)* p = &x; // decltype = void, type = void*
+```
+
+- `decltype` работает по разному от имён переменных, и от выражений
+```cpp
+int x = 0;
+decltype((x)) y = x; // decltype = int&
+++y;
+std::cout << x << " " << y; // 1 1
+```
+
+на самом деле это 2 разных `decltype` - [cppreference](https://en.cppreference.com/w/cpp/language/decltype)
+
+1) `decltype ( entity )`\
+если аргумент это необёрнутое в скобки имя переменной или члена класса, то `decltype` - просто тип этой штуки
+2) `decltype ( expression )`\
+ведёт себя по разному от value category выражения
+
+a) if the value category of expression is xvalue, then decltype yields `T&&`;\
+b) if the value category of expression is lvalue, then decltype yields `T&`;\
+c) if the value category of expression is prvalue, then decltype yields `T`.
+
+```cpp
+struct S {
+    int x;
+};
+int main() {
+    decltype(S().x) z = x; // decltype = int
+}
+```
+
+- `decltype` в возвращаемом типе функции
+
+допустим, хотим написать обёртку для обращения к контейнеру по индексу
+```cpp
+template <typename Container>
+auto getElement(Container& cont, size_t index) {
+    return cont[index];
+}
+int main() {
+    std::vector<int> v(5);
+    getElement(v, 3) = 1; // CE
+}
+```
+так не сработает, потому что вернули rvalue (тип T)
+
+```cpp
+template <typename Container>
+auto& getElement(Container& cont, size_t index) {
+    return cont[index];
+}
+int main() {
+    std::vector<int> v(5);
+    getElement(v, 3) = 1; // OK
+}
+```
+но такое не работает для `vector<bool>`. не сможем сделать lvalue ссылку на rvalue
+
+что, если мы хотим иногда возвращать ссылку, а иногда не ссылку. **хотим не отбрасывать амперсанды, если они были**
+```cpp
+template <typename Container>
+auto getElement(Container& cont, size_t index)
+    -> decltype(cont[index])
+{
+    return cont[index];
+}
+```
+это снова trailing return type, здесь `auto` ничего не выводит
+
+- `decltype(auto)` (C++14)
+
+означает ровно то же самое
+```cpp
+template <typename Container>
+decltype(auto) getElement(Container& cont, size_t index) {
+    return cont[index];
+}
+```
+такая запись говорит нам, что тип будет выведен автоматически из того, что написано под `return`, **но по правилам `decltype`, а не по правилам `auto`** (например, без отбрасывания амперсандов)
+
+исходя из этого
+```cpp
+template <typename Container>
+decltype(auto) getElement(Container& cont, size_t index) {
+    decltype(auto) element = cont[index];
+    return (element); // скобки => decltype от выражения
+}
+```
+возвращаем висячую ссылку на локальный объект
+
+итог: **не надо писать круглые скобки после `return`**
+
+- упростим реализацию `emplace_back`
+```cpp
+void emplace_back(auto&&... args) {
+    if (sz_ == cap_) {
+        reserve(cap_ > 0 ? cap_ * 2 : 1);
+    }
+    AllocTraits::construct(alloc_, arr_ + sz_, std::forward<decltype(args)>(args)...);
+    ++sz_;
+}
+```
+проверим случаи
+1) lvalue
+```cpp
+decltype(args) = T& // всё работает так же
+```
+2) rvalue
+```cpp
+decltype(args) = T&&
+```
+в `forward` передадим тип с двумя амперсандами. раньше для rvalue мы передавали сырой тип `T`, и на него навышивалось `&&`. а теперь мы передаём сразу `T&&`. но из-за reference collapsing ничего не меняется - оно всё равно правильно работает
+
+```cpp
+template <typename T>
+T&& forward(std::remove_reference_t<T>& value) noexcept {
+    return static_cast<T&&>(value);
+}
+```
+[итоговый код вектора](./code/lec42/vector.cpp)
